@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-canvas: #f3f6fa;
+  --bg-elevated: #ffffff;
+  --bg-subtle: #eaf0f7;
+  --border-default: #d8e1ec;
+  --border-strong: #bcc9da;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --grid-dot: rgba(15, 23, 42, 0.06);
+}
+
+.dark {
+  --bg-canvas: #090c11;
+  --bg-elevated: #0f141d;
+  --bg-subtle: #151c28;
+  --border-default: #1e2837;
+  --border-strong: #2b394e;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --grid-dot: rgba(148, 163, 184, 0.065);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.telemetry-grid {
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Native Electron frameless window dragging */
+.electron-drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.electron-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Precision Desktop Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #06b6d4;
+}
+
+/* Force LTR for IPs, ciphers, ports, URLs, and code inside RTL layouts */
+.ltr-data {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Printable / PDF Engineering Security Report Styles */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only-report {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  .print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

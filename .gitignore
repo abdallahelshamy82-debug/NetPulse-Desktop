@@ -1,0 +1,34 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js build outputs
+/.next/
+/out/
+
+# Electron build artifacts
+/dist-electron/
+
+# Environment variables
+.env
+.env*
+!.env.example
+
+# Temporary test, report, log & cache files
+*.pdf
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+/tmp/
+/scratch/
+
+# OS & certificate artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.pem

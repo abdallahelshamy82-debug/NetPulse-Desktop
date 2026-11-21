@@ -1,0 +1,82 @@
+{
+  "name": "netpulse-desktop",
+  "version": "1.0.0",
+  "description": "NetPulse Desktop — Network Telemetry, SSL & Cybersecurity Diagnostic Suite",
+  "author": "NetPulse Engineering",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1 -p 3000",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 3000",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "electron:dev": "concurrently -k -n NEXT,ELECTRON -c cyan,magenta \"npm run dev\" \"wait-on http://127.0.0.1:3000 && cross-env ELECTRON_START_URL=http://127.0.0.1:3000 electron .\"",
+    "electron:start": "concurrently -k -n NEXT,ELECTRON -c cyan,green \"npm run start\" \"wait-on http://127.0.0.1:3000 && cross-env ELECTRON_START_URL=http://127.0.0.1:3000 electron .\"",
+    "electron:pack": "cross-env ELECTRON_BUILD=1 npm run build && node scripts/prepare-standalone.js && electron-builder --dir",
+    "electron:dist": "cross-env ELECTRON_BUILD=1 npm run build && node scripts/prepare-standalone.js && electron-builder --win"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.12.1",
+    "lucide-react": "^0.511.0",
+    "next": "15.5.29",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.2.0",
+    "electron-builder": "^25.1.8",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "15.5.29",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.netpulse.desktop",
+    "productName": "NetPulse Desktop",
+    "copyright": "Copyright © 2026 NetPulse Desktop",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "standalone"
+      }
+    ],
+    "win": {
+      "icon": "electron/assets/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
