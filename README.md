@@ -2,6 +2,9 @@
 
 **Network Telemetry, SSL/TLS Auditing, DNS Profiling & Cybersecurity Diagnostic Suite**
 
+- **Live Web Demo (Vercel Production):** [https://netpulse-desktop-six.vercel.app](https://netpulse-desktop-six.vercel.app)
+- **GitHub Releases (Windows Desktop v1.0.0):** [Release v1.0.0](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/tag/v1.0.0) — [Download Installer (`Setup.1.0.0.exe`)](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/download/v1.0.0/NetPulse.Desktop.Setup.1.0.0.exe) | [Download Portable (`.exe`)](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/download/v1.0.0/NetPulse.Desktop.1.0.0.exe)
+
 NetPulse Desktop is a hybrid **Next.js 15 (App Router)** + **Electron 35** diagnostic workbench engineered around real Node.js network sockets (`tls`, `https`, `http`, `dns`, `net`) and native OS hardware telemetry — with **zero mock data**. It ships both as a standalone **Windows Desktop application** and as a hardened **Vercel / Web deployment** from a single codebase.
 
 > **Bilingual UI (English + Arabic):** Instant language switching between English and Arabic, keeping the desktop chrome (`DesktopTitleBar`, sidebar navigation, window controls, charts, and technical telemetry) structurally locked in LTR while rendering Arabic prose, Bidi mixed labels, and exported Arabic A4 PDF reports in proper native RTL.
@@ -105,9 +108,9 @@ npm run electron:dist
 
 ## Download (Windows Desktop v1.0.0)
 
-Publish the generated `dist-electron/` release binaries as assets under your GitHub repository **Releases** (`v1.0.0`):
+Download the pre-built x64 binaries directly from **[GitHub Releases v1.0.0](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/tag/v1.0.0)**:
 
-- **Windows Installer (NSIS x64):** `https://github.com/<your-username>/netpulse-desktop/releases/download/v1.0.0/NetPulse.Desktop.Setup.1.0.0.exe`
-- **Windows Portable (x64):** `https://github.com/<your-username>/netpulse-desktop/releases/download/v1.0.0/NetPulse.Desktop.1.0.0.exe`
+- **Windows Installer (NSIS x64 — 155.71 MB):** [`NetPulse.Desktop.Setup.1.0.0.exe`](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/download/v1.0.0/NetPulse.Desktop.Setup.1.0.0.exe)
+- **Windows Portable (x64 — 155.49 MB):** [`NetPulse.Desktop.1.0.0.exe`](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/download/v1.0.0/NetPulse.Desktop.1.0.0.exe)
 
 > **Packaging & SmartScreen Note:** `package.json` sets `"signAndEditExecutable": false` so Windows builds succeed offline without requiring Windows Developer Mode for `winCodeSign` symlink extraction. Because release binaries are unsigned portfolio builds unless you supply a code-signing certificate, Windows SmartScreen may prompt *More info -> Run anyway* on first launch.
