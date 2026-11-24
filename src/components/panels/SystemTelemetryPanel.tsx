@@ -15,10 +15,13 @@ import {
   Activity,
   ShieldAlert,
   AlertTriangle,
+  Database,
+  ArrowDown,
+  ArrowUp,
 } from "lucide-react";
 import type { SystemTelemetryResult } from "@/types/telemetry";
 import type { Dictionary, Locale } from "@/lib/i18n";
-import { formatBytes, formatUptime } from "@/lib/cn";
+import { formatByteRate, formatBytes, formatClockGhz, formatUptime } from "@/lib/cn";
 import {
   TelemetrySparkline,
   type TelemetryPoint,
@@ -197,8 +200,8 @@ export const SystemTelemetryPanel = React.memo(function SystemTelemetryPanel({
             </div>
           )}
 
-          {/* Top 4 Hardware KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* Top 6 Hardware KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {/* CPU Card */}
             <div className="rounded-xl bg-canvas-elevated border border-stroke p-4 shadow-panel">
               <div className="flex items-center justify-between gap-2 text-xs text-ink-muted mb-2">
@@ -219,8 +222,15 @@ export const SystemTelemetryPanel = React.memo(function SystemTelemetryPanel({
                   <Cpu className="w-4 h-4 text-cyan-500" />
                 </div>
               </div>
-              <div className="text-2xl font-mono font-bold text-cyan-500 ltr-data">
-                {telemetry.cpu.usagePercent}%
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="text-2xl font-mono font-bold text-cyan-500 ltr-data">
+                  {telemetry.cpu.usagePercent}%
+                </div>
+                {telemetry.cpu.currentSpeedMhz && (
+                  <div className="text-xs font-mono font-semibold text-emerald-500 ltr-data">
+                    {formatClockGhz(telemetry.cpu.currentSpeedMhz)}
+                  </div>
+                )}
               </div>
               <div className="mt-2 h-1.5 rounded-full bg-canvas-subtle overflow-hidden">
                 <div
@@ -236,7 +246,11 @@ export const SystemTelemetryPanel = React.memo(function SystemTelemetryPanel({
                   <span className="inline-block ltr-data">{telemetry.cpu.coresCount}</span>{" "}
                   {t.system.cores}
                 </span>{" "}
-                • <span className="inline-block ltr-data">{telemetry.cpu.speedMhz} MHz</span>
+                •{" "}
+                <span dir={proseDir} className="inline-block">
+                  {t.system.baseClock}:{" "}
+                  <span className="inline-block ltr-data">{telemetry.cpu.speedMhz} MHz</span>
+                </span>
               </div>
             </div>
 
@@ -287,6 +301,84 @@ export const SystemTelemetryPanel = React.memo(function SystemTelemetryPanel({
                   </span>
                 )}
               </div>
+            </div>
+
+            {/* Live Network Speed Card */}
+            <div className="rounded-xl bg-canvas-elevated border border-stroke p-4 shadow-panel">
+              <div className="flex items-center justify-between text-xs text-ink-muted mb-2">
+                <span dir={proseDir}>{t.system.netThroughput}</span>
+                <Wifi className="w-4 h-4 text-cyan-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-2.5 mt-1">
+                <div className="p-2 rounded-lg bg-canvas-subtle border border-stroke">
+                  <div className="flex items-center gap-1 text-[10px] text-ink-muted">
+                    <ArrowDown className="w-3 h-3 text-emerald-500 shrink-0" />
+                    <span dir={proseDir}>{t.system.downloadShort}</span>
+                  </div>
+                  <div className="text-sm font-mono font-bold text-emerald-500 mt-0.5 ltr-data">
+                    {formatByteRate(telemetry.networkThroughput?.rxBytesPerSec ?? 0)}
+                  </div>
+                </div>
+                <div className="p-2 rounded-lg bg-canvas-subtle border border-stroke">
+                  <div className="flex items-center gap-1 text-[10px] text-ink-muted">
+                    <ArrowUp className="w-3 h-3 text-cyan-500 shrink-0" />
+                    <span dir={proseDir}>{t.system.uploadShort}</span>
+                  </div>
+                  <div className="text-sm font-mono font-bold text-cyan-500 mt-0.5 ltr-data">
+                    {formatByteRate(telemetry.networkThroughput?.txBytesPerSec ?? 0)}
+                  </div>
+                </div>
+              </div>
+              <div
+                dir={proseDir}
+                className={`text-[10px] font-mono text-ink-muted mt-2 ${isAr ? "text-right" : ""}`}
+              >
+                <span className="inline-block ltr-data">
+                  {telemetry.networkInterfaces.filter((n) => !n.internal).length}
+                </span>{" "}
+                {t.system.adaptersUnit}
+              </div>
+            </div>
+
+            {/* System Disk Card */}
+            <div className="rounded-xl bg-canvas-elevated border border-stroke p-4 shadow-panel">
+              <div className="flex items-center justify-between text-xs text-ink-muted mb-2">
+                <span dir={proseDir}>
+                  {t.system.diskUsage}
+                  {telemetry.disk?.mount ? ` (${telemetry.disk.mount})` : ""}
+                </span>
+                <Database className="w-4 h-4 text-violet-400" />
+              </div>
+              {telemetry.disk ? (
+                <>
+                  <div className="text-2xl font-mono font-bold text-violet-400 ltr-data">
+                    {telemetry.disk.usagePercent}%
+                  </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-canvas-subtle overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        telemetry.disk.usagePercent > 90 ? "bg-rose-500" : "bg-violet-500"
+                      }`}
+                      style={{ width: `${Math.min(100, telemetry.disk.usagePercent)}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 text-[11px] font-mono text-ink-secondary ltr-data">
+                    {formatBytes(telemetry.disk.usedBytes, 1)} /{" "}
+                    {formatBytes(telemetry.disk.totalBytes, 1)}
+                  </div>
+                  <div
+                    dir={proseDir}
+                    className={`text-[10px] font-mono text-ink-muted mt-0.5 ${isAr ? "text-right" : ""}`}
+                  >
+                    {t.system.free}:{" "}
+                    <span className="inline-block ltr-data">
+                      {formatBytes(telemetry.disk.freeBytes, 1)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm font-mono text-ink-muted mt-4">—</div>
+              )}
             </div>
 
             {/* Uptime Card */}

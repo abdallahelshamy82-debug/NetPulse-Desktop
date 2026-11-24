@@ -15,6 +15,18 @@ export function formatBytes(bytes: number, decimals = 2): string {
   return `${(bytes / Math.pow(k, i)).toFixed(dm)} ${sizes[i]}`;
 }
 
+export function formatByteRate(bytesPerSec: number): string {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return "0 B/s";
+  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`;
+}
+
+export function formatClockGhz(mhz: number): string {
+  if (!Number.isFinite(mhz) || mhz <= 0) return "—";
+  return `${(mhz / 1000).toFixed(2)} GHz`;
+}
+
 export function formatUptime(seconds: number, lang: "en" | "ar"): string {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);

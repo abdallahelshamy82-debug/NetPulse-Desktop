@@ -17,9 +17,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NetPulse Desktop — Network Telemetry, SSL & Cybersecurity Diagnostic Suite",
+  title: "NetPulse — Network Telemetry, SSL/TLS & DNS Diagnostic Suite",
   description:
-    "Production-grade network telemetry, live SSL/TLS certificate auditor, DNS radar, TCP port scanner, and local hardware diagnostics.",
+    "Live SSL/TLS certificate & security headers auditor, DNS radar, paced TCP port scanner, and native Windows hardware telemetry.",
   icons: {
     icon: "/icon.svg",
   },

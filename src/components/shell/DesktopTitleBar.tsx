@@ -12,20 +12,31 @@ import {
   FileText,
   Zap,
   Menu,
+  Download,
+  Share2,
+  Check,
 } from "lucide-react";
 import type { Dictionary, Locale } from "@/lib/i18n";
+
+export const DESKTOP_RELEASE_URL =
+  "https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/latest";
 
 interface DesktopTitleBarProps {
   t: Dictionary;
   lang: Locale;
   theme: "dark" | "light";
   isElectron: boolean;
+  cloudMode?: boolean;
+  probeRegion?: string | null;
   hasReportData: boolean;
   fullScanLoading: boolean;
+  fullScanStage?: string | null;
+  shareCopied?: boolean;
   onToggleTheme: () => void;
   onToggleLang: () => void;
   onOpenReport: () => void;
   onRunFullSuite: () => void;
+  onCopyShareLink?: () => void;
   onToggleMobileMenu: () => void;
 }
 
@@ -34,12 +45,17 @@ export function DesktopTitleBar({
   lang,
   theme,
   isElectron,
+  cloudMode = false,
+  probeRegion = null,
   hasReportData,
   fullScanLoading,
+  fullScanStage = null,
+  shareCopied = false,
   onToggleTheme,
   onToggleLang,
   onOpenReport,
   onRunFullSuite,
+  onCopyShareLink,
   onToggleMobileMenu,
 }: DesktopTitleBarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
@@ -47,53 +63,36 @@ export function DesktopTitleBar({
 
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.netpulseElectron : undefined;
-    if (api) {
-      api.isMaximized().then(setIsMaximized).catch(() => undefined);
-      const unsub = api.onMaximizedChange((state) => setIsMaximized(state));
-      return unsub;
-    }
-
-    const handleFullscreenChange = () => {
-      if (!window.netpulseElectron) {
-        setIsMaximized(Boolean(document.fullscreenElement));
-      }
-    };
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
+    if (!api) return;
+    api.isMaximized().then(setIsMaximized).catch(() => undefined);
+    const unsub = api.onMaximizedChange((state) => setIsMaximized(state));
+    return unsub;
   }, []);
 
   const handleMinimize = () => {
-    if (window.netpulseElectron) {
-      window.netpulseElectron.minimize();
-    }
+    window.netpulseElectron?.minimize();
   };
 
   const handleMaximize = () => {
-    if (window.netpulseElectron) {
-      window.netpulseElectron.toggleMaximize().then(setIsMaximized).catch(() => undefined);
-      return;
-    }
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen?.().catch(() => undefined);
-      setIsMaximized(true);
-    } else {
-      document.exitFullscreen?.().catch(() => undefined);
-      setIsMaximized(false);
-    }
+    window.netpulseElectron?.toggleMaximize().then(setIsMaximized).catch(() => undefined);
   };
 
   const handleClose = () => {
-    if (window.netpulseElectron) {
-      window.netpulseElectron.close();
-    }
+    window.netpulseElectron?.close();
   };
+
+  const modeLabel = isElectron
+    ? t.modeDesktop
+    : cloudMode
+      ? `${t.modeCloud}${probeRegion ? ` • ${probeRegion}` : ""}`
+      : t.modeWeb;
 
   return (
     <header
       dir="ltr"
-      className="no-print h-11 shrink-0 bg-canvas-elevated border-b border-stroke flex items-center justify-between px-3 electron-drag select-none z-30"
+      className={`no-print ${
+        isElectron ? "h-11 electron-drag" : "h-12"
+      } shrink-0 bg-canvas-elevated border-b border-stroke flex items-center justify-between px-3 sm:px-4 select-none z-30`}
     >
       {/* Start: App Branding & Runtime Mode */}
       <div className="flex items-center gap-2.5 min-w-0">
@@ -107,7 +106,7 @@ export function DesktopTitleBar({
         </button>
 
         {/* Custom NetPulse Shield-Pulse Mark */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-6 h-6 rounded-md bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-500/40 flex items-center justify-center shrink-0">
             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none">
               <path
@@ -126,13 +125,13 @@ export function DesktopTitleBar({
             </svg>
           </div>
           <span className="font-bold text-xs sm:text-sm tracking-tight text-ink truncate">
-            {t.appName}
+            {isElectron ? t.appName : t.webAppName}
           </span>
         </div>
 
         <span className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          <span dir={proseDir}>{isElectron ? t.modeDesktop : t.modeWeb}</span>
+          <span dir={proseDir}>{modeLabel}</span>
         </span>
 
         <span className="hidden xl:inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-canvas-subtle text-ink-muted border border-stroke">
@@ -140,32 +139,64 @@ export function DesktopTitleBar({
         </span>
       </div>
 
-      {/* End: Actions + Locale/Theme + Native Window Controls */}
+      {/* End: Actions + Locale/Theme + Adaptive Web CTA or Native Electron Window Controls */}
       <div className="flex items-center gap-1.5 electron-no-drag">
         <button
           type="button"
           onClick={onRunFullSuite}
           disabled={fullScanLoading}
-          className="hidden sm:inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 disabled:opacity-50 transition-colors"
+          className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 disabled:opacity-60 transition-colors"
         >
           <Zap className={`w-3 h-3 ${fullScanLoading ? "animate-pulse" : ""}`} />
-          <span dir={proseDir}>{t.controls.runFullScan}</span>
+          <span dir={proseDir} className="hidden xs:inline sm:inline">
+            {t.controls.runFullScan}
+          </span>
+          {fullScanLoading && fullScanStage && (
+            <span className="font-mono text-[10px] px-1 rounded bg-emerald-500/20 ltr-data">
+              {fullScanStage}
+            </span>
+          )}
         </button>
 
         {hasReportData && (
           <button
             type="button"
             onClick={onOpenReport}
-            className="hidden md:inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold bg-cyan-500/15 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 transition-colors"
+            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-semibold bg-cyan-500/15 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 transition-colors"
           >
             <FileText className="w-3 h-3" />
-            <span dir={proseDir}>{t.controls.exportReport}</span>
+            <span dir={proseDir} className="hidden sm:inline">
+              {t.controls.exportReport}
+            </span>
           </button>
         )}
 
-        <div className="h-4 w-px bg-stroke mx-1 hidden sm:block" />
+        {!isElectron && onCopyShareLink && (
+          <button
+            type="button"
+            onClick={onCopyShareLink}
+            className="hidden md:inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11px] font-medium bg-canvas-subtle hover:bg-stroke text-ink-secondary hover:text-ink border border-stroke transition-colors"
+            title={t.controls.shareLink}
+          >
+            {shareCopied ? (
+              <>
+                <Check className="w-3 h-3 text-emerald-500" />
+                <span dir={proseDir} className="text-emerald-500 font-semibold">
+                  {t.controls.linkCopied}
+                </span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-3 h-3 text-cyan-500" />
+                <span dir={proseDir}>{t.controls.shareLink}</span>
+              </>
+            )}
+          </button>
+        )}
 
-        {/* Language Toggle (RTL / LTR) */}
+        <div className="h-4 w-px bg-stroke mx-0.5 hidden sm:block" />
+
+        {/* Language Toggle (EN / AR) */}
         <button
           type="button"
           onClick={onToggleLang}
@@ -191,50 +222,51 @@ export function DesktopTitleBar({
           )}
         </button>
 
-        <div className="h-4 w-px bg-stroke mx-1" />
-
-        {/* Native Desktop Window Control Buttons */}
-        <div className="flex items-center gap-0.5 ltr-data">
-          <button
-            type="button"
-            onClick={handleMinimize}
-            disabled={!isElectron}
-            className="h-7 w-8 rounded-md hover:bg-canvas-subtle disabled:opacity-45 text-ink-secondary hover:text-ink inline-flex items-center justify-center transition-colors"
-            title={t.controls.minimize}
-            aria-label={t.controls.minimize}
+        {/* Web Mode: Direct Download CTA instead of fake disabled Windows buttons */}
+        {!isElectron ? (
+          <a
+            href={DESKTOP_RELEASE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:inline-flex items-center gap-1.5 h-7 px-2.5 ms-1 rounded-md text-[11px] font-semibold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-glowCyan transition-colors"
           >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={handleMaximize}
-            className="h-7 w-8 rounded-md hover:bg-canvas-subtle text-ink-secondary hover:text-ink inline-flex items-center justify-center transition-colors"
-            title={
-              isElectron
-                ? isMaximized
-                  ? t.controls.restore
-                  : t.controls.maximize
-                : t.controls.fullscreen
-            }
-            aria-label={t.controls.maximize}
-          >
-            {isMaximized ? (
-              <Copy className="w-3 h-3" />
-            ) : (
-              <Square className="w-3 h-3" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={handleClose}
-            disabled={!isElectron}
-            className="h-7 w-8 rounded-md hover:bg-rose-500 hover:text-white disabled:opacity-45 text-ink-secondary inline-flex items-center justify-center transition-colors"
-            title={t.controls.close}
-            aria-label={t.controls.close}
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
+            <Download className="w-3 h-3" />
+            <span dir={proseDir}>{t.controls.downloadDesktop}</span>
+          </a>
+        ) : (
+          <>
+            <div className="h-4 w-px bg-stroke mx-1" />
+            <div className="flex items-center gap-0.5 ltr-data">
+              <button
+                type="button"
+                onClick={handleMinimize}
+                className="h-7 w-8 rounded-md hover:bg-canvas-subtle text-ink-secondary hover:text-ink inline-flex items-center justify-center transition-colors"
+                title={t.controls.minimize}
+                aria-label={t.controls.minimize}
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleMaximize}
+                className="h-7 w-8 rounded-md hover:bg-canvas-subtle text-ink-secondary hover:text-ink inline-flex items-center justify-center transition-colors"
+                title={isMaximized ? t.controls.restore : t.controls.maximize}
+                aria-label={t.controls.maximize}
+              >
+                {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+              </button>
+              <button
+                type="button"
+                onClick={handleClose}
+                className="h-7 w-8 rounded-md hover:bg-rose-500 hover:text-white text-ink-secondary inline-flex items-center justify-center transition-colors"
+                title={t.controls.close}
+                aria-label={t.controls.close}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </header>
   );

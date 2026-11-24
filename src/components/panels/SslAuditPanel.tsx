@@ -22,6 +22,8 @@ import {
   KeyRound,
   Server,
   Layers,
+  Cloud,
+  Monitor,
 } from "lucide-react";
 import type { AuditResult, CookieIssueCode, SecurityHeaderCheck } from "@/types/telemetry";
 import type { Dictionary, Locale } from "@/lib/i18n";
@@ -264,6 +266,16 @@ export function SslAuditPanel({
                   grade={result.grade}
                   label={t.audit.overallScore}
                 />
+                {result.grade === "F" &&
+                  typeof result.rawScore === "number" &&
+                  result.rawScore > result.score && (
+                    <p
+                      dir={proseDir}
+                      className="text-[11px] text-rose-500 text-center mt-1 font-medium"
+                    >
+                      {t.audit.scoreCappedNote}
+                    </p>
+                  )}
               </div>
 
               {/* Sub-scores */}
@@ -348,9 +360,33 @@ export function SslAuditPanel({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {result.probeVantage && (
+                    <span
+                      dir={proseDir}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+                        result.probeVantage.mode === "cloud"
+                          ? "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/25"
+                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                      }`}
+                    >
+                      {result.probeVantage.mode === "cloud" ? (
+                        <Cloud className="w-3 h-3 shrink-0" />
+                      ) : (
+                        <Monitor className="w-3 h-3 shrink-0" />
+                      )}
+                      <span>
+                        {result.probeVantage.mode === "cloud"
+                          ? `${t.common.vantageCloud}${
+                              result.probeVantage.region ? ` (${result.probeVantage.region})` : ""
+                            }`
+                          : t.common.vantageLocal}
+                      </span>
+                    </span>
+                  )}
                   {result.ssl.protocol && (
                     <span className="px-2.5 py-0.5 rounded-md text-xs font-mono font-semibold bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 ltr-data">
                       {result.ssl.protocol}
+                      {result.ssl.alpnProtocol === "h2" ? " • HTTP/2" : ""}
                     </span>
                   )}
                   <span
@@ -636,6 +672,13 @@ export function SslAuditPanel({
                 <div className="text-xs font-mono font-bold text-ink mt-0.5 ltr-data">
                   {result.http.responseTimeMs} ms
                 </div>
+                {result.http.redirects.length > 0 &&
+                  typeof result.http.totalChainMs === "number" &&
+                  result.http.totalChainMs > result.http.responseTimeMs && (
+                    <div className="text-[10px] font-mono text-ink-muted mt-0.5 ltr-data">
+                      Chain: {result.http.totalChainMs} ms
+                    </div>
+                  )}
               </div>
               <div className="p-2.5 rounded-lg bg-canvas-subtle border border-stroke">
                 <div dir={proseDir} className={`text-[10px] text-ink-muted ${isAr ? "text-right" : ""}`}>
@@ -659,8 +702,18 @@ export function SslAuditPanel({
                 </div>
               </div>
               <div className="p-2.5 rounded-lg bg-canvas-subtle border border-stroke">
-                <div dir={proseDir} className={`text-[10px] text-ink-muted ${isAr ? "text-right" : ""}`}>
-                  {t.audit.serverBanner}
+                <div className="flex items-center justify-between gap-1.5">
+                  <div dir={proseDir} className={`text-[10px] text-ink-muted ${isAr ? "text-right" : ""}`}>
+                    {t.audit.serverBanner}
+                  </div>
+                  {result.http.techDisclosureWarning && (
+                    <span
+                      dir={proseDir}
+                      className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25"
+                    >
+                      {t.audit.techDisclosureWarn}
+                    </span>
+                  )}
                 </div>
                 <div
                   dir={result.http.serverHeader ? "ltr" : proseDir}
@@ -670,6 +723,11 @@ export function SslAuditPanel({
                 >
                   {result.http.serverHeader || t.audit.hiddenBanner}
                 </div>
+                {result.http.poweredByHeader && (
+                  <div className="text-[10px] font-mono text-amber-600 dark:text-amber-400 mt-0.5 break-all ltr-data">
+                    X-Powered-By: {result.http.poweredByHeader}
+                  </div>
+                )}
               </div>
               <div className="p-2.5 rounded-lg bg-canvas-subtle border border-stroke">
                 <div dir={proseDir} className={`text-[10px] text-ink-muted ${isAr ? "text-right" : ""}`}>

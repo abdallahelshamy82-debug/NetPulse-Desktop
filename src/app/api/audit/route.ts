@@ -7,12 +7,14 @@ import { performance } from "perf_hooks";
 import { parseTargetHost } from "@/lib/validators";
 import {
   createPinnedLookup,
+  getProbeVantage,
   isCloudEnvironment,
   isPrivateTargetsAllowed,
   NetworkGuardError,
   resolveAllValidatedHosts,
   selectReachableHost,
 } from "@/lib/network-guard";
+import { enforceCloudRateLimit } from "@/lib/rate-limit";
 import type {
   AuditResult,
   CertificateChainItem,
@@ -86,6 +88,7 @@ function inspectTls(
       host: hostname,
       port,
       servername: sniServerName,
+      ALPNProtocols: ["h2", "http/1.1"],
       lookup: createPinnedLookup(resolvedIp, family),
       rejectUnauthorized: false,
       timeout: timeoutMs,
@@ -95,6 +98,7 @@ function inspectTls(
       const handshakeMs = Math.round(performance.now() - start);
       const cert = socket.getPeerCertificate(true);
       const protocol = socket.getProtocol() || null;
+      const alpnProtocol = socket.alpnProtocol ? String(socket.alpnProtocol) : null;
       const cipher = socket.getCipher();
       const authorized = socket.authorized;
       const authErrorRaw = socket.authorizationError;
@@ -174,6 +178,7 @@ function inspectTls(
         authorized,
         authorizationError,
         protocol,
+        alpnProtocol,
         cipherName: cipher?.standardName || cipher?.name || null,
         cipherVersion: cipher?.version || null,
         subject: normalizeParty(cert?.subject),
@@ -359,6 +364,7 @@ async function fetchHttpWithRedirects(
   let currentFamily: 4 | 6 = initialFamily;
   const redirects: string[] = [];
   let lastResponse: SingleHttpFetch | null = null;
+  let lastHopMs = 0;
   let timedOut = false;
 
   for (let hop = 0; hop < 5; hop++) {
@@ -368,12 +374,14 @@ async function fetchHttpWithRedirects(
       break;
     }
 
+    const hopStart = performance.now();
     const res = await performSingleRequest(
       currentUrl,
       currentIp,
       currentFamily,
       Math.min(4000, remaining)
     );
+    lastHopMs = Math.max(1, Math.round(performance.now() - hopStart));
     lastResponse = res;
 
     const location = res.headers.location;
@@ -427,7 +435,8 @@ async function fetchHttpWithRedirects(
     break;
   }
 
-  const responseTimeMs = Math.round(performance.now() - start);
+  const totalChainMs = Math.round(performance.now() - start);
+  const responseTimeMs = lastHopMs > 0 ? lastHopMs : totalChainMs;
 
   // Check if plaintext HTTP redirects to HTTPS within remaining budget (using pinned initial IP)
   let httpsRedirectEnforced: boolean | null = protocol === "http:" ? false : null;
@@ -466,6 +475,11 @@ async function fetchHttpWithRedirects(
     return null;
   };
 
+  const serverHeader = headerStr("server");
+  const poweredByHeader = headerStr("x-powered-by");
+  const serverLeaksVersion = Boolean(serverHeader && /\/[0-9]+(\.[0-9]+)?/.test(serverHeader));
+  const techDisclosureWarning = Boolean(poweredByHeader || serverLeaksVersion);
+
   return {
     timedOut,
     rawHeaders: headers,
@@ -475,10 +489,12 @@ async function fetchHttpWithRedirects(
       statusMessage: lastResponse?.statusMessage ?? "",
       httpVersion: lastResponse?.httpVersion ?? "1.1",
       responseTimeMs,
+      totalChainMs,
       redirects,
       httpsRedirectEnforced,
-      serverHeader: headerStr("server"),
-      poweredByHeader: headerStr("x-powered-by"),
+      serverHeader,
+      poweredByHeader,
+      techDisclosureWarning,
       contentType: headerStr("content-type"),
     },
   };
@@ -541,9 +557,13 @@ function evaluateSetCookies(headers: http.IncomingHttpHeaders): CookieAuditSumma
       }
     }
 
+    const isSensitive =
+      /session|sess|sid|token|auth|jwt|login|user|csrf|xsrf|remember|^__(host|secure)-/i.test(
+        name
+      );
     const issues: CookieIssueCode[] = [];
     if (!secure) issues.push("missing_secure");
-    if (!httpOnly) issues.push("missing_httponly");
+    if (isSensitive && !httpOnly) issues.push("missing_httponly");
     if (!sameSite || (sameSite.toLowerCase() === "none" && !secure)) {
       issues.push("weak_samesite");
     }
@@ -553,6 +573,7 @@ function evaluateSetCookies(headers: http.IncomingHttpHeaders): CookieAuditSumma
       secure,
       httpOnly,
       sameSite,
+      isSensitive,
       issues,
     });
   }
@@ -792,13 +813,13 @@ function evaluateSecurityHeaders(headers: http.IncomingHttpHeaders): SecurityHea
     });
   }
 
-  // 6. Permissions-Policy (max 5)
+  // 6. Permissions-Policy (max 5 — defense-in-depth warning awards partial credit when omitted)
   checks.push({
     id: "pp",
     name: "Permissions-Policy",
     value: pp,
     status: pp ? "pass" : "warn",
-    score: pp ? 5 : 0,
+    score: pp ? 5 : 2,
     maxScore: 5,
     severity: "low",
     issueKey: pp ? "pp_pass" : "pp_missing",
@@ -851,6 +872,9 @@ function computeGrade(
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimited = enforceCloudRateLimit(req, "audit", 20);
+    if (rateLimited) return rateLimited;
+
     const body = (await req.json()) as { target?: unknown; port?: unknown };
     const parsed = parseTargetHost(body.target);
     if (!parsed.ok) {
@@ -970,15 +994,21 @@ export async function POST(req: NextRequest) {
     const headersScore = headers.reduce((sum, item) => sum + item.score, 0);
     const headersMax = headers.reduce((sum, item) => sum + item.maxScore, 0);
 
-    // Transport Hygiene Score (max 10) — zero for plaintext HTTP-only sites; penalizes insecure Set-Cookie flags
+    // Transport Hygiene Score (max 10) — zero for plaintext HTTP-only sites; penalizes insecure Set-Cookie flags & version leaks
     let transportScore = 0;
     const isHttpsFinal = ssl.available && httpOutcome.info.finalUrl.startsWith("https://");
+    if (isHttpsFinal && ssl.alpnProtocol === "h2") {
+      httpOutcome.info.httpVersion = "2";
+    }
     if (isHttpsFinal) {
       if (httpOutcome.info.statusCode >= 200 && httpOutcome.info.statusCode < 500) {
         transportScore += 5;
       }
       if (httpOutcome.info.httpsRedirectEnforced === true) {
         transportScore += 5;
+      }
+      if (httpOutcome.info.techDisclosureWarning) {
+        transportScore -= 2;
       }
       if (cookies.cookies.some((c) => c.issues.includes("missing_secure"))) {
         transportScore -= 5;
@@ -996,8 +1026,9 @@ export async function POST(req: NextRequest) {
       transportScore = Math.max(0, transportScore);
     }
 
-    const totalScore = Math.min(100, Math.max(0, tlsScore + headersScore + transportScore));
-    const grade = computeGrade(totalScore, ssl, cookies, cspCheck);
+    const rawScore = Math.min(100, Math.max(0, tlsScore + headersScore + transportScore));
+    const grade = computeGrade(rawScore, ssl, cookies, cspCheck);
+    const totalScore = grade === "F" ? Math.min(rawScore, 35) : rawScore;
 
     const issuesCount = {
       pass: headers.filter((h) => h.status === "pass").length,
@@ -1011,7 +1042,9 @@ export async function POST(req: NextRequest) {
       resolvedIp,
       ipFamily,
       scannedAt: new Date().toISOString(),
+      probeVantage: getProbeVantage(),
       score: totalScore,
+      rawScore,
       grade,
       breakdown: {
         tlsScore,

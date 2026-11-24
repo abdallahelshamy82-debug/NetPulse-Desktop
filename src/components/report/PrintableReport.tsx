@@ -431,6 +431,28 @@ function ReportDocumentBody({
                 {matchingDns.records.MX.map((m) => `${m.exchange} (${m.priority})`).join(", ")}
               </div>
             )}
+            {matchingDns.domainSecurity && (
+              <div className="pt-1 border-t border-slate-200 flex flex-wrap gap-x-4 gap-y-1">
+                <span>
+                  <strong>SPF:</strong>{" "}
+                  {matchingDns.domainSecurity.spf.present
+                    ? matchingDns.domainSecurity.spf.policy ?? "present"
+                    : "missing"}
+                </span>
+                <span>
+                  <strong>DMARC:</strong>{" "}
+                  {matchingDns.domainSecurity.dmarc.present
+                    ? `p=${matchingDns.domainSecurity.dmarc.policy ?? "configured"}`
+                    : "missing"}
+                </span>
+                <span>
+                  <strong>CAA:</strong>{" "}
+                  {matchingDns.domainSecurity.caa.present
+                    ? matchingDns.domainSecurity.caa.issuers.join(", ")
+                    : "unrestricted"}
+                </span>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -445,27 +467,34 @@ function ReportDocumentBody({
             {matchingPorts.ports.map((p) => (
               <div
                 key={p.port}
-                className="p-2 rounded border border-slate-200 flex items-center justify-between gap-2"
+                className="p-2 rounded border border-slate-200 flex flex-col gap-1"
               >
-                <span className="font-mono inline-block ltr-data">
-                  <strong>:{p.port}</strong> {p.service}
-                </span>
-                <span
-                  className={
-                    p.status === "open"
-                      ? "text-emerald-700 font-bold"
-                      : p.status === "filtered"
-                        ? "text-amber-700 font-semibold"
-                        : p.status === "error"
-                          ? "text-rose-700 font-semibold"
-                          : "text-slate-500"
-                  }
-                >
-                  {portStatusLabel(p.status)}{" "}
+                <div className="flex items-center justify-between gap-2">
                   <span className="font-mono inline-block ltr-data">
-                    ({p.latencyMs !== null ? `${p.latencyMs}ms` : "—"})
+                    <strong>:{p.port}</strong> {p.service}
                   </span>
-                </span>
+                  <span
+                    className={
+                      p.status === "open"
+                        ? "text-emerald-700 font-bold"
+                        : p.status === "filtered"
+                          ? "text-amber-700 font-semibold"
+                          : p.status === "error"
+                            ? "text-rose-700 font-semibold"
+                            : "text-slate-500"
+                    }
+                  >
+                    {portStatusLabel(p.status)}{" "}
+                    <span className="font-mono inline-block ltr-data">
+                      ({p.latencyMs !== null ? `${p.latencyMs}ms` : "—"})
+                    </span>
+                  </span>
+                </div>
+                {p.banner && (
+                  <div className="text-[10px] font-mono text-slate-600 break-all ltr-data">
+                    {p.banner}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -475,7 +504,7 @@ function ReportDocumentBody({
       {/* Footer Disclaimer */}
       <div className="pt-4 border-t border-slate-300 text-[10px] text-slate-500 flex items-center justify-between gap-4">
         <span>{t.report.footerDisclaimer}</span>
-        <span className="font-mono shrink-0 ltr-data">NetPulse Desktop v1.0.0</span>
+        <span className="font-mono shrink-0 ltr-data">NetPulse v1.1.0</span>
       </div>
     </div>
   );

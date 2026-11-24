@@ -9,6 +9,7 @@ import {
   Trash2,
   ExternalLink,
   Clock,
+  Layers,
 } from "lucide-react";
 import type { ScanHistoryEntry, ScanHistoryType } from "@/types/telemetry";
 import type { Dictionary, Locale } from "@/lib/i18n";
@@ -40,6 +41,13 @@ export function HistoryPanel({
     filter === "all" ? entries : entries.filter((entry) => entry.type === filter);
 
   const typeMeta = (type: ScanHistoryType) => {
+    if (type === "full") {
+      return {
+        label: t.history.filterFull,
+        icon: Layers,
+        color: "bg-violet-500/15 text-violet-500 border-violet-500/25",
+      };
+    }
     if (type === "audit") {
       return {
         label: t.history.filterAudit,
@@ -101,6 +109,7 @@ export function HistoryPanel({
         {(
           [
             ["all", t.history.filterAll],
+            ["full", t.history.filterFull],
             ["audit", t.history.filterAudit],
             ["dns", t.history.filterDns],
             ["ports", t.history.filterPorts],

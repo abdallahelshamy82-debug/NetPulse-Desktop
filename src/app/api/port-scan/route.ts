@@ -3,11 +3,13 @@ import net from "net";
 import { performance } from "perf_hooks";
 import { parsePortListStrict, parseTargetHost } from "@/lib/validators";
 import {
+  getProbeVantage,
   isCloudEnvironment,
   isPrivateTargetsAllowed,
   NetworkGuardError,
   resolveAllValidatedHosts,
 } from "@/lib/network-guard";
+import { enforceCloudRateLimit } from "@/lib/rate-limit";
 import type {
   PortScanItem,
   PortScanResult,
@@ -52,25 +54,72 @@ function getPortMeta(port: number): PortMeta {
   );
 }
 
-function probeTcpPort(host: string, port: number, timeoutMs: number): Promise<PortScanItem> {
+function extractSafeBanner(rawBuf: Buffer, port: number): string | null {
+  if (!rawBuf || rawBuf.length === 0) return null;
+  const text = rawBuf
+    .subarray(0, 512)
+    .toString("latin1")
+    .replace(/[^\x20-\x7e\r\n]/g, " ")
+    .trim();
+  if (!text) return null;
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+
+  if (/^HTTP\/\d/i.test(lines[0])) {
+    const statusLine = lines[0].slice(0, 40);
+    const serverLine = lines.find((l) => /^server\s*:/i.test(l));
+    if (serverLine) {
+      const srv = serverLine.replace(/^server\s*:\s*/i, "").trim().slice(0, 34);
+      return srv ? `${statusLine} • ${srv}` : statusLine;
+    }
+    return statusLine;
+  }
+
+  if (port === 3306 && lines[0].length > 4) {
+    const verMatch = /([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9._-]+)?)/.exec(text);
+    if (verMatch) return `MySQL ${verMatch[1].slice(0, 40)}`;
+  }
+
+  return lines[0].replace(/\s+/g, " ").slice(0, 68);
+}
+
+const TLS_SKIP_BANNER_PORTS = new Set([443, 8443]);
+const HTTP_PROBE_BANNER_PORTS = new Set([80, 3000, 8080]);
+
+function probeTcpPort(
+  host: string,
+  hostnameHeader: string,
+  port: number,
+  timeoutMs: number
+): Promise<PortScanItem> {
   return new Promise((resolve) => {
     const meta = getPortMeta(port);
     const start = performance.now();
     const socket = new net.Socket();
     let settled = false;
+    let connectLatencyMs: number | null = null;
+    let bannerTimer: ReturnType<typeof setTimeout> | null = null;
 
     const done = (
       status: PortStatus,
       errorCode: string | null,
-      includeLatency: boolean
+      includeLatency: boolean,
+      banner: string | null = null
     ) => {
       if (settled) return;
       settled = true;
+      if (bannerTimer !== null) {
+        clearTimeout(bannerTimer);
+        bannerTimer = null;
+      }
       const latencyMs = includeLatency
-        ? Number((performance.now() - start).toFixed(1))
+        ? (connectLatencyMs ?? Number((performance.now() - start).toFixed(1)))
         : null;
 
-      // Keep a no-op error listener attached during teardown so late kernel errors never crash Node.js
       if (socket.listenerCount("error") === 0) {
         socket.on("error", () => {});
       }
@@ -82,6 +131,7 @@ function probeTcpPort(host: string, port: number, timeoutMs: number): Promise<Po
         protocol: "TCP",
         status,
         latencyMs,
+        ...(banner ? { banner } : {}),
         errorCode,
         risk: meta.risk,
         noteKey: meta.noteKey,
@@ -91,14 +141,57 @@ function probeTcpPort(host: string, port: number, timeoutMs: number): Promise<Po
     socket.setTimeout(timeoutMs);
 
     socket.once("connect", () => {
-      done("open", null, true);
+      connectLatencyMs = Number((performance.now() - start).toFixed(1));
+      if (TLS_SKIP_BANNER_PORTS.has(port)) {
+        done("open", null, true, null);
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let totalLen = 0;
+
+      socket.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        totalLen += chunk.length;
+        if (totalLen >= 160) {
+          const banner = extractSafeBanner(Buffer.concat(chunks), port);
+          done("open", null, true, banner);
+        }
+      });
+
+      socket.once("end", () => {
+        const banner = chunks.length > 0 ? extractSafeBanner(Buffer.concat(chunks), port) : null;
+        done("open", null, true, banner);
+      });
+
+      bannerTimer = setTimeout(() => {
+        const banner = chunks.length > 0 ? extractSafeBanner(Buffer.concat(chunks), port) : null;
+        done("open", null, true, banner);
+      }, 260);
+
+      if (HTTP_PROBE_BANNER_PORTS.has(port)) {
+        try {
+          const safeHost = hostnameHeader.replace(/[^a-zA-Z0-9.:[\]-]/g, "");
+          socket.write(`HEAD / HTTP/1.0\r\nHost: ${safeHost}\r\nConnection: close\r\n\r\n`);
+        } catch {
+          // Ignore write errors after connect
+        }
+      }
     });
 
     socket.once("timeout", () => {
+      if (connectLatencyMs !== null) {
+        done("open", null, true, null);
+        return;
+      }
       done("filtered", "TIMEOUT", true);
     });
 
     socket.on("error", (err: NodeJS.ErrnoException) => {
+      if (connectLatencyMs !== null) {
+        done("open", null, true, null);
+        return;
+      }
       const code = err.code ?? "SOCKET_ERROR";
       if (code === "ECONNREFUSED") {
         done("closed", code, true);
@@ -151,6 +244,9 @@ async function runWithPacedConcurrency<T, R>(
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimited = enforceCloudRateLimit(req, "ports", 12);
+    if (rateLimited) return rateLimited;
+
     const body = (await req.json()) as {
       target?: unknown;
       ports?: unknown;
@@ -206,7 +302,7 @@ export async function POST(req: NextRequest) {
         };
       }
 
-      return probeTcpPort(ip, port, Math.min(requestedTimeoutMs, remaining));
+      return probeTcpPort(ip, hostname, port, Math.min(requestedTimeoutMs, remaining));
     };
 
     let activeIp = candidates[0].address;
@@ -285,6 +381,7 @@ export async function POST(req: NextRequest) {
       hostname,
       resolvedIp: activeIp,
       scannedAt: new Date().toISOString(),
+      probeVantage: getProbeVantage(),
       durationMs,
       timeoutMs: requestedTimeoutMs,
       ports: sorted,

@@ -6,16 +6,20 @@ import http from "http";
 import { performance } from "perf_hooks";
 import { parseTargetHost } from "@/lib/validators";
 import {
+  getProbeVantage,
   isCloudEnvironment,
   isPrivateTargetsAllowed,
   NetworkGuardError,
-  resolveAllValidatedHosts,
+  resolveValidatedHostsDetailed,
   selectReachableHost,
 } from "@/lib/network-guard";
+import { enforceCloudRateLimit } from "@/lib/rate-limit";
 import type {
+  DnsCaaRecord,
   DnsPingResult,
   DnsRecordsBundle,
   DnsRecordTypeKey,
+  DomainEmailSecurityPosture,
   LatencyPulse,
   LatencyStats,
 } from "@/types/telemetry";
@@ -86,14 +90,17 @@ function measureSocketLifecycle(
       }
 
       lookupStartTime = performance.now();
-      resolveAllValidatedHosts(hostname, allowPrivate, Math.min(2000, timeoutMs))
+      resolveValidatedHostsDetailed(hostname, allowPrivate, Math.min(2000, timeoutMs), {
+        enrichIpv4: false,
+      })
         .then((res) => {
           lookupEndTime = performance.now();
-          customLookupDurationMs = Number(
-            Math.max(0, lookupEndTime - (lookupStartTime ?? lookupEndTime)).toFixed(1)
-          );
+          customLookupDurationMs =
+            res.pureLookupMs ??
+            Number(Math.max(0, lookupEndTime - (lookupStartTime ?? lookupEndTime)).toFixed(1));
           const preferred =
-            res.find((entry) => entry.address === initialTarget.address) ?? res[0];
+            res.candidates.find((entry) => entry.address === initialTarget.address) ??
+            res.candidates[0];
           replySuccess(preferred.address, preferred.family);
         })
         .catch((err) => {
@@ -380,6 +387,7 @@ async function withRaceTimeout<T>(promise: Promise<T>, timeoutMs: number): Promi
 
 interface QueryDnsRecordsOutput {
   records: DnsRecordsBundle;
+  domainSecurity: DomainEmailSecurityPosture;
   queryMs: number;
   timedOut: boolean;
   resolverSource: "system" | "public-fallback";
@@ -388,8 +396,83 @@ interface QueryDnsRecordsOutput {
 
 type ResolverLike = Pick<
   typeof dns.promises,
-  "resolve4" | "resolve6" | "resolveMx" | "resolveTxt" | "resolveNs" | "resolveCname" | "resolveSoa"
+  | "resolve4"
+  | "resolve6"
+  | "resolveMx"
+  | "resolveTxt"
+  | "resolveNs"
+  | "resolveCname"
+  | "resolveCaa"
+  | "resolveSoa"
 >;
+
+function normalizeCaaRecords(raw: unknown): DnsCaaRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DnsCaaRecord[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const critical = typeof rec.critical === "number" ? rec.critical : 0;
+    for (const tag of ["issue", "issuewild", "iodef", "contactemail", "contactphone"]) {
+      if (typeof rec[tag] === "string" && rec[tag]) {
+        out.push({ critical, tag, value: rec[tag] as string });
+      }
+    }
+  }
+  return out;
+}
+
+function evaluateDomainSecurity(
+  txtRecords: string[],
+  dmarcTxtRecords: string[],
+  caaRecords: DnsCaaRecord[]
+): DomainEmailSecurityPosture {
+  const spfRecord =
+    txtRecords.find((t) => /^v=spf1(\s|$)/i.test(t.trim()))?.trim() ?? null;
+  let spfPolicy: DomainEmailSecurityPosture["spf"]["policy"] = null;
+  if (spfRecord) {
+    if (/(?:^|\s)-all(?:\s|$)/i.test(spfRecord)) spfPolicy = "hardfail";
+    else if (/(?:^|\s)~all(?:\s|$)/i.test(spfRecord)) spfPolicy = "softfail";
+    else if (/(?:^|\s)\?all(?:\s|$)/i.test(spfRecord)) spfPolicy = "neutral";
+    else if (/(?:^|\s)\+all(?:\s|$)/i.test(spfRecord)) spfPolicy = "allowall";
+  }
+
+  const dmarcRecord =
+    dmarcTxtRecords.find((t) => /^v=dmarc1(\s|;|$)/i.test(t.trim()))?.trim() ?? null;
+  let dmarcPolicy: DomainEmailSecurityPosture["dmarc"]["policy"] = null;
+  if (dmarcRecord) {
+    const m = /(?:^|;\s*)p\s*=\s*(reject|quarantine|none)\b/i.exec(dmarcRecord);
+    if (m) {
+      dmarcPolicy = m[1].toLowerCase() as "reject" | "quarantine" | "none";
+    }
+  }
+
+  const issuers = Array.from(
+    new Set(
+      caaRecords
+        .filter((c) => c.tag === "issue" || c.tag === "issuewild")
+        .map((c) => c.value.split(";")[0]?.trim() ?? "")
+        .filter((v) => v.length > 0)
+    )
+  );
+
+  return {
+    spf: {
+      present: Boolean(spfRecord),
+      policy: spfPolicy,
+      record: spfRecord,
+    },
+    dmarc: {
+      present: Boolean(dmarcRecord),
+      policy: dmarcPolicy,
+      record: dmarcRecord,
+    },
+    caa: {
+      present: caaRecords.length > 0,
+      issuers,
+    },
+  };
+}
 
 function runSingleRecordQuery(
   resolver: ResolverLike,
@@ -410,8 +493,30 @@ function runSingleRecordQuery(
       return withRaceTimeout(resolver.resolveNs(hostname), timeoutMs);
     case "CNAME":
       return withRaceTimeout(resolver.resolveCname(hostname), timeoutMs);
+    case "CAA":
+      return withRaceTimeout(resolver.resolveCaa(hostname), timeoutMs);
     case "SOA":
       return withRaceTimeout(resolver.resolveSoa(hostname), timeoutMs);
+  }
+}
+
+async function queryDmarcTxt(hostname: string, timeoutMs: number): Promise<string[]> {
+  const dmarcHost = `_dmarc.${hostname}`;
+  try {
+    const raw = (await withRaceTimeout(dns.promises.resolveTxt(dmarcHost), timeoutMs)) as string[][];
+    return raw.map((chunks) => chunks.join(""));
+  } catch (err) {
+    if (!isFallbackEligibleDnsError(err)) {
+      return [];
+    }
+    try {
+      const fb = new dns.promises.Resolver();
+      fb.setServers(["1.1.1.1", "8.8.8.8"]);
+      const raw = (await withRaceTimeout(fb.resolveTxt(dmarcHost), timeoutMs)) as string[][];
+      return raw.map((chunks) => chunks.join(""));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -427,12 +532,14 @@ async function queryDnsRecords(
     TXT: [],
     NS: [],
     CNAME: [],
+    CAA: [],
     SOA: null,
   };
 
   if (isIp) {
     return {
       records: emptyRecords,
+      domainSecurity: evaluateDomainSecurity([], [], []),
       queryMs: 0,
       timedOut: false,
       resolverSource: "system",
@@ -440,13 +547,16 @@ async function queryDnsRecords(
     };
   }
 
-  const recordTypes: DnsRecordTypeKey[] = ["A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA"];
+  const recordTypes: DnsRecordTypeKey[] = ["A", "AAAA", "MX", "TXT", "NS", "CNAME", "CAA", "SOA"];
   const dnsStart = performance.now();
   const sysBudget = Math.max(800, Math.min(timeoutMs, 2200));
 
-  const initialResults = await Promise.allSettled(
-    recordTypes.map((type) => runSingleRecordQuery(dns.promises, type, hostname, sysBudget))
-  );
+  const [initialResults, dmarcTxtRecords] = await Promise.all([
+    Promise.allSettled(
+      recordTypes.map((type) => runSingleRecordQuery(dns.promises, type, hostname, sysBudget))
+    ),
+    queryDmarcTxt(hostname, sysBudget),
+  ]);
 
   const settledMap = new Map<DnsRecordTypeKey, PromiseSettledResult<unknown>>();
   const fallbackTypes: DnsRecordTypeKey[] = [];
@@ -508,13 +618,21 @@ async function queryDnsRecords(
   const txtRes = settledMap.get("TXT");
   const nsRes = settledMap.get("NS");
   const cnameRes = settledMap.get("CNAME");
+  const caaRes = settledMap.get("CAA");
   const soaRes = settledMap.get("SOA");
+
+  const txtList =
+    txtRes?.status === "fulfilled"
+      ? (txtRes.value as string[][]).map((chunks) => chunks.join(""))
+      : [];
+  const caaList = caaRes?.status === "fulfilled" ? normalizeCaaRecords(caaRes.value) : [];
 
   return {
     queryMs,
     timedOut,
     resolverSource,
     recordErrors,
+    domainSecurity: evaluateDomainSecurity(txtList, dmarcTxtRecords, caaList),
     records: {
       A:
         aRes?.status === "fulfilled"
@@ -528,12 +646,10 @@ async function queryDnsRecords(
         mxRes?.status === "fulfilled"
           ? [...(mxRes.value as dns.MxRecord[])].sort((a, b) => a.priority - b.priority)
           : [],
-      TXT:
-        txtRes?.status === "fulfilled"
-          ? (txtRes.value as string[][]).map((chunks) => chunks.join(""))
-          : [],
+      TXT: txtList,
       NS: nsRes?.status === "fulfilled" ? (nsRes.value as string[]) : [],
       CNAME: cnameRes?.status === "fulfilled" ? (cnameRes.value as string[]) : [],
+      CAA: caaList,
       SOA: soaRes?.status === "fulfilled" ? (soaRes.value as dns.SoaRecord) : null,
     },
   };
@@ -541,6 +657,9 @@ async function queryDnsRecords(
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimited = enforceCloudRateLimit(req, "dns", 20);
+    if (rateLimited) return rateLimited;
+
     const body = (await req.json()) as { target?: unknown; pulses?: unknown };
     const parsed = parseTargetHost(body.target);
     if (!parsed.ok) {
@@ -555,11 +674,12 @@ export async function POST(req: NextRequest) {
     const budgetMs = isCloudEnvironment() ? 8500 : 18000;
     const deadline = performance.now() + budgetMs;
 
-    // 1. Measure initial cold DNS lookup BEFORE running parallel record queries (avoids warm cache bias)
-    const coldDnsStart = performance.now();
-    const initialCandidates = await resolveAllValidatedHosts(hostname, allowPrivate, 2500);
-    const coldDnsMs = isIp ? null : Number((performance.now() - coldDnsStart).toFixed(1));
-    const initialTarget = await selectReachableHost(initialCandidates, 443, 1400);
+    // 1. Measure pure cold OS DNS lookup BEFORE Anycast enrichment or parallel record queries
+    const initialLookup = await resolveValidatedHostsDetailed(hostname, allowPrivate, 2500, {
+      enrichIpv4: true,
+    });
+    const coldDnsMs = isIp ? null : initialLookup.pureLookupMs;
+    const initialTarget = await selectReachableHost(initialLookup.candidates, 443, 1400);
     const resolvedIp = initialTarget.address;
 
     // 2. Run consecutive single-socket lifecycle latency pulses within timeout budget (reserve time for zone query + fallback)
@@ -610,12 +730,14 @@ export async function POST(req: NextRequest) {
       hostname,
       resolvedIp,
       scannedAt: new Date().toISOString(),
+      probeVantage: getProbeVantage(),
       dnsTotalQueryMs: dnsBundle.queryMs,
       resolverSource: dnsBundle.resolverSource,
       ...(Object.keys(dnsBundle.recordErrors).length > 0
         ? { recordErrors: dnsBundle.recordErrors }
         : {}),
       records: dnsBundle.records,
+      domainSecurity: dnsBundle.domainSecurity,
       pulses,
       stats: {
         dns: computeStats(okPulses.map((p) => p.dnsMs)),

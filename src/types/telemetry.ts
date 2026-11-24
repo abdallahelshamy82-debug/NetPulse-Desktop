@@ -2,6 +2,11 @@ export type SecurityGrade = "A+" | "A" | "A-" | "B+" | "B" | "C" | "D" | "F";
 
 export type HeaderStatus = "pass" | "warn" | "fail";
 
+export interface ProbeVantage {
+  mode: "cloud" | "local";
+  region: string | null;
+}
+
 export interface CertificateParty {
   CN?: string;
   O?: string;
@@ -27,6 +32,7 @@ export interface SslDetails {
   authorized: boolean;
   authorizationError: string | null;
   protocol: string | null;
+  alpnProtocol?: string | null;
   cipherName: string | null;
   cipherVersion: string | null;
   subject: CertificateParty;
@@ -67,10 +73,12 @@ export interface HttpResponseInfo {
   statusMessage: string;
   httpVersion: string;
   responseTimeMs: number;
+  totalChainMs?: number;
   redirects: string[];
   httpsRedirectEnforced: boolean | null;
   serverHeader: string | null;
   poweredByHeader: string | null;
+  techDisclosureWarning?: boolean;
   contentType: string | null;
 }
 
@@ -90,6 +98,7 @@ export interface CookieAuditItem {
   secure: boolean;
   httpOnly: boolean;
   sameSite: string | null;
+  isSensitive?: boolean;
   issues: CookieIssueCode[];
 }
 
@@ -106,7 +115,9 @@ export interface AuditResult {
   resolvedIp: string | null;
   ipFamily: number | null;
   scannedAt: string;
+  probeVantage?: ProbeVantage;
   score: number;
+  rawScore?: number;
   grade: SecurityGrade;
   breakdown: AuditScoreBreakdown;
   ssl: SslDetails;
@@ -141,6 +152,12 @@ export interface DnsSoaRecord {
   minttl: number;
 }
 
+export interface DnsCaaRecord {
+  critical: number;
+  tag: string;
+  value: string;
+}
+
 export interface DnsRecordsBundle {
   A: DnsAddressRecord[];
   AAAA: DnsAddressRecord[];
@@ -148,7 +165,25 @@ export interface DnsRecordsBundle {
   TXT: string[];
   NS: string[];
   CNAME: string[];
+  CAA?: DnsCaaRecord[];
   SOA: DnsSoaRecord | null;
+}
+
+export interface DomainEmailSecurityPosture {
+  spf: {
+    present: boolean;
+    policy: "hardfail" | "softfail" | "neutral" | "allowall" | null;
+    record: string | null;
+  };
+  dmarc: {
+    present: boolean;
+    policy: "reject" | "quarantine" | "none" | null;
+    record: string | null;
+  };
+  caa: {
+    present: boolean;
+    issuers: string[];
+  };
 }
 
 export interface LatencyPulse {
@@ -171,17 +206,19 @@ export interface LatencyStats {
   jitter: number | null;
 }
 
-export type DnsRecordTypeKey = "A" | "AAAA" | "MX" | "TXT" | "NS" | "CNAME" | "SOA";
+export type DnsRecordTypeKey = "A" | "AAAA" | "MX" | "TXT" | "NS" | "CNAME" | "CAA" | "SOA";
 
 export interface DnsPingResult {
   target: string;
   hostname: string;
   resolvedIp: string | null;
   scannedAt: string;
+  probeVantage?: ProbeVantage;
   dnsTotalQueryMs: number;
   resolverSource?: "system" | "public-fallback";
   recordErrors?: Partial<Record<DnsRecordTypeKey, string>>;
   records: DnsRecordsBundle;
+  domainSecurity?: DomainEmailSecurityPosture;
   pulses: LatencyPulse[];
   stats: {
     dns: LatencyStats;
@@ -203,6 +240,7 @@ export interface PortScanItem {
   protocol: "TCP";
   status: PortStatus;
   latencyMs: number | null;
+  banner?: string | null;
   errorCode?: string | null;
   risk: "info" | "low" | "medium" | "high";
   noteKey: string;
@@ -213,6 +251,7 @@ export interface PortScanResult {
   hostname: string;
   resolvedIp: string;
   scannedAt: string;
+  probeVantage?: ProbeVantage;
   durationMs: number;
   timeoutMs?: number;
   ports: PortScanItem[];
@@ -245,6 +284,19 @@ export interface NetworkInterfaceEntry {
   internal: boolean;
 }
 
+export interface DiskTelemetry {
+  mount: string;
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  usagePercent: number;
+}
+
+export interface NetworkThroughputTelemetry {
+  rxBytesPerSec: number;
+  txBytesPerSec: number;
+}
+
 export interface SystemTelemetryResult {
   timestamp: string;
   hostname: string;
@@ -259,6 +311,7 @@ export interface SystemTelemetryResult {
     model: string;
     coresCount: number;
     speedMhz: number;
+    currentSpeedMhz?: number | null;
     usagePercent: number;
     metricSource: CpuMetricSource;
     loadAvg: [number, number, number] | null;
@@ -274,10 +327,12 @@ export interface SystemTelemetryResult {
     processHeapUsedBytes: number;
     appWorkingSetBytes: number | null;
   };
+  disk?: DiskTelemetry | null;
+  networkThroughput?: NetworkThroughputTelemetry | null;
   networkInterfaces: NetworkInterfaceEntry[];
 }
 
-export type ScanHistoryType = "audit" | "dns" | "ports";
+export type ScanHistoryType = "full" | "audit" | "dns" | "ports";
 
 export interface ScanHistoryEntry {
   id: string;

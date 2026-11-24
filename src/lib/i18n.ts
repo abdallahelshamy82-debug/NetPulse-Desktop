@@ -3,10 +3,13 @@ export type Locale = "en" | "ar";
 export const translations = {
   en: {
     appName: "NetPulse Desktop",
+    webAppName: "NetPulse",
     appSubtitle: "Network Telemetry, SSL & Cybersecurity Diagnostic Suite",
     modeDesktop: "DESKTOP ENGINE",
-    modeWeb: "WEB WORKBENCH",
+    modeWeb: "LOCAL WORKBENCH",
+    modeCloud: "CLOUD NODE",
     engineOnline: "Node.js Telemetry Engine Online",
+    engineCloudOnline: "Cloud Edge Diagnostic Engine Online",
     zeroMockBadge: "100% Live Probes",
     nav: {
       sectionDiagnostics: "Diagnostics",
@@ -34,6 +37,9 @@ export const translations = {
       printPdf: "Print / Save PDF",
       exportJson: "Export JSON",
       runFullScan: "Full Suite",
+      downloadDesktop: "Desktop App (.exe)",
+      shareLink: "Share Link",
+      linkCopied: "Link Copied",
     },
     common: {
       targetPlaceholder: "Enter domain or URL (e.g. magixa.tech, github.com)",
@@ -70,6 +76,9 @@ export const translations = {
       timeoutError: "Server timed out (HTTP 504). Try fewer pulses or a faster target.",
       nonJsonError: "Unexpected non-JSON server response",
       targetLabel: "Target",
+      vantageCloud: "Measured from Cloud Node",
+      vantageLocal: "Measured from Local Machine",
+      browserRttLabel: "Your Browser RTT",
     },
     audit: {
       title: "Live SSL Certificate & Security Headers Auditor",
@@ -133,6 +142,8 @@ export const translations = {
       httpOnlyBanner: "Plaintext HTTP only (Port 443 unavailable) — traffic is unencrypted.",
       hiddenBanner: "Hidden",
       ptsUnit: "pts",
+      techDisclosureWarn: "Version Disclosed",
+      scoreCappedNote: "Score capped at 35 due to invalid/untrusted SSL",
     },
     dns: {
       title: "DNS Radar & Multi-Pulse Latency Profiler",
@@ -173,6 +184,14 @@ export const translations = {
       pulseTableTitle: "Per-Pulse Telemetry Log",
       pulseNum: "Pulse",
       httpCode: "HTTP",
+      postTlsWaitHint: "Post-TLS server wait",
+      emailSecTitle: "Email Spoofing & CA Authorization (SPF / DMARC / CAA)",
+      spfTitle: "SPF Policy",
+      dmarcTitle: "DMARC Policy",
+      caaTitle: "CAA Restriction",
+      configured: "Configured",
+      notConfigured: "Not Set",
+      caaOpenNote: "No CAA restriction (any CA can issue)",
     },
     ports: {
       title: "Live TCP Port Scanner",
@@ -253,6 +272,14 @@ export const translations = {
       adaptersUnit: "adapters",
       corePrefix: "CPU",
       secondsUnit: "sec",
+      netThroughput: "Live Network Speed",
+      downloadShort: "Down",
+      uploadShort: "Up",
+      diskUsage: "System Disk",
+      liveClock: "Live Speed",
+      desktopPromoTitle: "Get NetPulse Desktop for Windows",
+      desktopPromoDesc:
+        "Monitor real-time CPU, RAM, Disk, Live Network Speed & scan private LAN hosts offline.",
     },
     history: {
       title: "Local Scan History & Telemetry Archive",
@@ -262,6 +289,7 @@ export const translations = {
       emptyDesc:
         "Run an SSL Audit, DNS Radar, or TCP Port Scan — every completed probe is automatically archived here.",
       filterAll: "All",
+      filterFull: "Full Suites",
       filterAudit: "SSL Audits",
       filterDns: "DNS Radar",
       filterPorts: "Port Scans",
@@ -345,10 +373,13 @@ export const translations = {
   },
   ar: {
     appName: "NetPulse Desktop",
+    webAppName: "NetPulse",
     appSubtitle: "منصة قياس الشبكات، فحص شهادات SSL والتشخيص السيبراني",
     modeDesktop: "محرك سطح المكتب",
-    modeWeb: "وضع المتصفح الحي",
+    modeWeb: "وضع المتصفح المحلي",
+    modeCloud: "سحابة الفحص",
     engineOnline: "محرك Node.js للقياس الحي متصل",
+    engineCloudOnline: "محرك الفحص السحابي متصل",
     zeroMockBadge: "فحص حقيقي 100%",
     nav: {
       sectionDiagnostics: "أدوات التشخيص",
@@ -376,6 +407,9 @@ export const translations = {
       printPdf: "طباعة / حفظ PDF",
       exportJson: "تصدير JSON",
       runFullScan: "فحص شامل",
+      downloadDesktop: "نسخة الويندوز (.exe)",
+      shareLink: "نسخ الرابط",
+      linkCopied: "تم نسخ الرابط",
     },
     common: {
       targetPlaceholder: "أدخل دومين أو رابط حقيقي (مثال: magixa.tech أو github.com)",
@@ -412,6 +446,9 @@ export const translations = {
       timeoutError: "انتهت مهلة الخادم (HTTP 504). جرّب تقليل عدد النبضات أو فحص هدف أسرع.",
       nonJsonError: "استجابة غير متوقعة من الخادم",
       targetLabel: "الهدف",
+      vantageCloud: "تم القياس من السحابة",
+      vantageLocal: "تم القياس من جهازك",
+      browserRttLabel: "استجابة متصفحك",
     },
     audit: {
       title: "فاحص الأمان وشهادات SSL الحي",
@@ -475,6 +512,8 @@ export const translations = {
       httpOnlyBanner: "اتصال HTTP غير مشفّر فقط (المنفذ 443 غير متاح) — البيانات معرضة للتنصت.",
       hiddenBanner: "مخفي",
       ptsUnit: "نقطة",
+      techDisclosureWarn: "كشف إصدار السيرفر",
+      scoreCappedNote: "تم تقييد الدرجة عند 35 لعدم موثوقية الشهادة",
     },
     dns: {
       title: "رادار الـ DNS وقياس سرعة السيرفر الحي",
@@ -515,6 +554,14 @@ export const translations = {
       pulseTableTitle: "سجل قياسات النبضات الفردية",
       pulseNum: "النبضة",
       httpCode: "كود HTTP",
+      postTlsWaitHint: "انتظار السيرفر بعد TLS",
+      emailSecTitle: "حماية البريد وسلطة الشهادات (SPF / DMARC / CAA)",
+      spfTitle: "سياسة SPF",
+      dmarcTitle: "سياسة DMARC",
+      caaTitle: "قيود CAA",
+      configured: "مُفعّل",
+      notConfigured: "غير مُعد",
+      caaOpenNote: "بدون قيد CAA (مسموح لأي جهة إصدار)",
     },
     ports: {
       title: "فاحص المنافذ الشبكية الحي (TCP Port Scanner)",
@@ -595,6 +642,14 @@ export const translations = {
       adaptersUnit: "محوّلات",
       corePrefix: "نواة",
       secondsUnit: "ثانية",
+      netThroughput: "سرعة الشبكة اللحظية",
+      downloadShort: "تحميل",
+      uploadShort: "رفع",
+      diskUsage: "مساحة القرص",
+      liveClock: "التردد الفعلي",
+      desktopPromoTitle: "حمّل NetPulse Desktop للويندوز",
+      desktopPromoDesc:
+        "راقب استهلاك المعالج والذاكرة والقرص وسرعة الإنترنت اللحظية وافحص شبكتك المحلية بدون إنترنت.",
     },
     history: {
       title: "سجل الفحوصات المحفوظة والأرشيف المحلي",
@@ -604,6 +659,7 @@ export const translations = {
       emptyDesc:
         "قم بإجراء فحص SSL أو رادار DNS أو فحص منافذ ليتم أرشفة النتائج تلقائياً هنا.",
       filterAll: "الكل",
+      filterFull: "فحوصات شاملة",
       filterAudit: "فحوصات SSL",
       filterDns: "رادار DNS",
       filterPorts: "فحص المنافذ",

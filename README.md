@@ -1,11 +1,11 @@
-# NetPulse Desktop v1.0.0
+# NetPulse v1.1.0 (Web & Windows Desktop)
 
 **Network Telemetry, SSL/TLS Auditing, DNS Profiling & Cybersecurity Diagnostic Suite**
 
-- **Live Web Demo (Vercel Production):** [https://netpulse-desktop-six.vercel.app](https://netpulse-desktop-six.vercel.app)
-- **GitHub Releases (Windows Desktop v1.0.0):** [Release v1.0.0](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/tag/v1.0.0) — [Download Installer (`Setup.1.0.0.exe`)](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/download/v1.0.0/NetPulse.Desktop.Setup.1.0.0.exe) | [Download Portable (`.exe`)](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/download/v1.0.0/NetPulse.Desktop.1.0.0.exe)
+- **Live Web App (Vercel Production):** [https://netpulse-desktop-six.vercel.app](https://netpulse-desktop-six.vercel.app)
+- **GitHub Releases (Windows Desktop):** [Latest Release](https://github.com/abdallahelshamy82-debug/NetPulse-Desktop/releases/latest)
 
-NetPulse Desktop is a hybrid **Next.js 15 (App Router)** + **Electron 35** diagnostic workbench engineered around real Node.js network sockets (`tls`, `https`, `http`, `dns`, `net`) and native OS hardware telemetry — with **zero mock data**. It ships both as a standalone **Windows Desktop application** and as a hardened **Vercel / Web deployment** from a single codebase.
+NetPulse is a hybrid **Next.js 15 (App Router)** + **Electron 35** diagnostic workbench engineered around real Node.js network sockets (`tls`, `https`, `http`, `dns`, `net`) and native OS hardware telemetry — with **zero mock data**. It ships both as a purpose-built **Web diagnostic platform** (with shareable `?target=...&tab=...` links, Cloud Probe region badges, client-side Browser RTT comparison, and sliding-window rate limiting) and as a standalone **Windows Desktop application** from a single codebase.
 
 > **Bilingual UI (English + Arabic):** Instant language switching between English and Arabic, keeping the desktop chrome (`DesktopTitleBar`, sidebar navigation, window controls, charts, and technical telemetry) structurally locked in LTR while rendering Arabic prose, Bidi mixed labels, and exported Arabic A4 PDF reports in proper native RTL.
 
@@ -25,19 +25,19 @@ NetPulse Desktop is a hybrid **Next.js 15 (App Router)** + **Electron 35** diagn
 ## Core Diagnostic Modules
 
 1. **Live SSL/TLS & Security Headers Auditor (`/api/audit`)**
-   - Performs direct Node.js `tls.connect` handshakes and pinned HTTPS requests to inspect the full OpenSSL certificate chain (`subjectCN`, `issuerCN`, intermediate/root expiry walk), SHA-256 fingerprint, Subject Alternative Names (SANs), negotiated protocol (`TLSv1.3` / `TLSv1.2`), cipher suite, and key strength.
-   - Evaluates weighted security headers (`Strict-Transport-Security`, directive-aware `Content-Security-Policy` separating `script-src` vs `style-src`, `X-Frame-Options` + CSP `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`), audits `Set-Cookie` flags (`Secure`, `HttpOnly`, `SameSite`), falls back to plaintext HTTP when port 443 is unavailable, and caps untrusted, expired, or MITM chains honestly at **Grade F**.
+   - Performs direct Node.js `tls.connect` handshakes (with `ALPN` `HTTP/2` negotiation) and pinned HTTPS requests to inspect the full OpenSSL certificate chain (`subjectCN`, `issuerCN`, intermediate/root expiry walk), SHA-256 fingerprint, Subject Alternative Names (SANs), negotiated protocol (`TLSv1.3` / `TLSv1.2`), cipher suite, and key strength.
+   - Evaluates weighted security headers (`Strict-Transport-Security`, directive-aware `Content-Security-Policy` separating `script-src` vs `style-src`, `X-Frame-Options` + CSP `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`), flags `Server` / `X-Powered-By` version disclosure, audits `Set-Cookie` flags (`Secure`, `HttpOnly` on sensitive cookies, `SameSite`), falls back to plaintext HTTP when port 443 is unavailable, and caps untrusted, expired, or MITM chains honestly at **Grade F (`<= 35/100`)**.
 
-2. **DNS Radar & Multi-Stage Latency Telemetry (`/api/dns-ping`)**
-   - Extracts live `A`, `AAAA`, `MX`, `TXT`, `NS`, `CNAME`, and `SOA` zone records alongside consecutive single-socket `DNS / TCP / TLS / HTTP TTFB` lifecycle pulses, min/avg/max/jitter statistics, and interactive SVG charting (`LatencyChart`).
-   - Automatically falls back to public resolvers (`1.1.1.1` / `8.8.8.8`) if local OS DNS fails on large `TXT` payloads (`EREFUSED` / `ETIMEOUT` / `SERVFAIL`), surfaces an **OS Cache** badge when DNS lookups resolve from local cache (`< 2 ms`), and selects responsive Anycast endpoints across multi-IP domains.
+2. **DNS Radar, Email/CAA Security & Multi-Stage Latency Telemetry (`/api/dns-ping`)**
+   - Extracts live `A`, `AAAA`, `MX`, `TXT`, `NS`, `CNAME`, `CAA`, and `SOA` zone records alongside **Email Spoofing & CA Authorization posture (`SPF`, `_dmarc`, `CAA`)** and consecutive single-socket `DNS / TCP / TLS / HTTP TTFB` lifecycle pulses, min/avg/max/jitter statistics, and interactive SVG charting (`LatencyChart`).
+   - Isolates pure OS `dns.promises.lookup` latency from Anycast enrichment, pairs Cloud Node probes with live client-side **Browser RTT** comparison in Web mode, automatically falls back to public resolvers (`1.1.1.1` / `8.8.8.8`) if local OS DNS fails on large `TXT` payloads, and surfaces an **OS Cache** badge when DNS resolves from local cache (`< 2 ms`).
 
-3. **Paced TCP Port Scanner (`/api/port-scan`)**
-   - Probes standard (`21, 22, 80, 443, 3000, 3306, 5432, 6379, 8080`), Web/Proxy, Database, or custom TCP port lists (up to 24 ports) using `net.Socket`.
+3. **Paced TCP Port Scanner & Service Banner Grabbing (`/api/port-scan`)**
+   - Probes standard (`21, 22, 80, 443, 3000, 3306, 5432, 6379, 8080`), Web/Proxy, Database, or custom TCP port lists (up to 24 ports) using `net.Socket`, with lightweight **TCP Service Banner Grabbing** (`SSH`, `FTP`, `HTTP` status/server, `MySQL`, etc.) without inflating raw TCP handshake latency.
    - Prioritizes `443` and `80` first with paced socket launches (`60 ms` stagger, concurrency `3`) to prevent ISP SYN drops, performs automatic **multi-IP Anycast failover** (`resolveAllValidatedHosts`) when an upstream edge IP blackholes connections, retries critical web ports once on domains, supports **Fast (`1.8s`) / Deep (`3.5s`)** timeout modes, and classifies `open`, `closed` (`ECONNREFUSED`), `filtered` (`TIMEOUT`), and OS `error` states.
 
 4. **Native System Telemetry (`electron/telemetry.js` & `/api/system`)**
-   - On Windows, spawns a single persistent `C:\Windows\System32\typeperf.exe` collector (`\Processor Information(_Total)\% Processor Utility -si 2`) matching Windows Task Manager CPU utility with zero per-poll CPU spikes, paired with continuous per-core delta sampling, usable physical RAM, combined Electron + embedded server Working Set memory (`app.getAppMetrics()` + `Get-Process`), and live network adapters (`IPv4`, `IPv6`, `MAC`, `CIDR`).
+   - On Windows, spawns a single persistent `C:\Windows\System32\typeperf.exe` collector (`% Processor Utility`, `% Processor Performance` live Turbo clock, and live Network Interface RX/TX bytes/sec) matching Windows Task Manager with zero per-poll CPU spikes, paired with continuous per-core delta sampling, usable physical RAM, Private Working Set App Memory, native System Disk space (`fs.statfs`), and live network adapters (`IPv4`, `IPv6`, `MAC`, `CIDR`).
    - Guarantees zero-orphan teardown (`before-quit` kills both the `typeperf.exe` child and the entire embedded Next.js process tree via Windows `taskkill.exe /T /F`).
 
 5. **Offline Arabic (RTL) & English Printable PDF Reports + JSON Export + History**

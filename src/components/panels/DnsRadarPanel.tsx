@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Radar,
@@ -14,6 +14,11 @@ import {
   Check,
   Database,
   AlertCircle,
+  Cloud,
+  Monitor,
+  ShieldCheck,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 import type { DnsPingResult, DnsRecordTypeKey } from "@/types/telemetry";
 import type { Dictionary, Locale } from "@/lib/i18n";
@@ -32,8 +37,8 @@ interface DnsRadarPanelProps {
   onRunDnsPing: (targetOverride?: string) => void;
 }
 
-type RecordTab = "ALL" | "A" | "AAAA" | "MX" | "TXT" | "NS" | "CNAME";
-const RECORD_TABS: RecordTab[] = ["ALL", "A", "AAAA", "MX", "TXT", "NS", "CNAME"];
+type RecordTab = "ALL" | "A" | "AAAA" | "MX" | "TXT" | "NS" | "CNAME" | "CAA";
+const RECORD_TABS: RecordTab[] = ["ALL", "A", "AAAA", "MX", "TXT", "NS", "CNAME", "CAA"];
 const QUICK_TARGETS = ["magixa.tech", "github.com", "cloudflare.com", "vercel.com"];
 
 export function DnsRadarPanel({
@@ -50,8 +55,49 @@ export function DnsRadarPanel({
 }: DnsRadarPanelProps) {
   const [activeTab, setActiveTab] = useState<RecordTab>("ALL");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [browserRttMs, setBrowserRttMs] = useState<number | null>(null);
   const isAr = lang === "ar";
   const proseDir = isAr ? "rtl" : "ltr";
+
+  // When probed from a Cloud Node, also measure client-side Browser RTT so the user can compare Cloud Edge vs their own ISP!
+  useEffect(() => {
+    setBrowserRttMs(null);
+    if (!result || result.probeVantage?.mode !== "cloud" || !result.hostname) {
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+
+    const measureBrowserRtt = async () => {
+      try {
+        const start = performance.now();
+        await fetch(`https://${result.hostname}`, {
+          method: "HEAD",
+          mode: "no-cors",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const elapsed = Math.round(performance.now() - start);
+        if (!cancelled && elapsed > 0 && elapsed < 4000) {
+          setBrowserRttMs(elapsed);
+        }
+      } catch {
+        // Ignore CORS/network errors gracefully — optional comparative metric
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    void measureBrowserRtt();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [result]);
 
   const handleCopy = (key: string, value: string) => {
     navigator.clipboard?.writeText(value).catch(() => undefined);
@@ -67,9 +113,19 @@ export function DnsRadarPanel({
   const recordCount = (tab: RecordTab): number => {
     if (!result) return 0;
     const r = result.records;
+    const caaList = r.CAA ?? [];
     if (tab === "ALL") {
-      return r.A.length + r.AAAA.length + r.MX.length + r.TXT.length + r.NS.length + r.CNAME.length;
+      return (
+        r.A.length +
+        r.AAAA.length +
+        r.MX.length +
+        r.TXT.length +
+        r.NS.length +
+        r.CNAME.length +
+        caaList.length
+      );
     }
+    if (tab === "CAA") return caaList.length;
     return r[tab].length;
   };
 
@@ -209,6 +265,49 @@ export function DnsRadarPanel({
             </div>
           )}
 
+          {/* Probe Vantage & Client Browser RTT Strip */}
+          {result.probeVantage && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-canvas-elevated border border-stroke text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  dir={proseDir}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium border ${
+                    result.probeVantage.mode === "cloud"
+                      ? "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/25"
+                      : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                  }`}
+                >
+                  {result.probeVantage.mode === "cloud" ? (
+                    <Cloud className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Monitor className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>
+                    {result.probeVantage.mode === "cloud"
+                      ? `${t.common.vantageCloud}${
+                          result.probeVantage.region ? ` (${result.probeVantage.region})` : ""
+                        }`
+                      : t.common.vantageLocal}
+                  </span>
+                </span>
+                {browserRttMs !== null && (
+                  <span
+                    dir={proseDir}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/25"
+                  >
+                    <span>
+                      {t.common.browserRttLabel}:{" "}
+                      <strong className="font-mono inline-block ltr-data">~{browserRttMs} ms</strong>
+                    </span>
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] font-mono text-ink-muted ltr-data">
+                {result.hostname} {result.resolvedIp ? `→ ${result.resolvedIp}` : ""}
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="rounded-xl bg-canvas-elevated border border-stroke p-4 shadow-panel">
               <div className="flex items-center justify-between gap-1.5 text-xs text-ink-muted mb-2">
@@ -319,6 +418,12 @@ export function DnsRadarPanel({
                 {t.dns.max}:{" "}
                 <span className="inline-block ltr-data">{result.stats.ttfb.max ?? "—"}</span>
               </div>
+              <div
+                dir={proseDir}
+                className={`text-[10px] text-ink-muted mt-0.5 ${isAr ? "text-right" : ""}`}
+              >
+                {t.dns.postTlsWaitHint}
+              </div>
             </div>
 
             <div className="rounded-xl bg-canvas-elevated border border-stroke p-4 shadow-panel">
@@ -389,6 +494,135 @@ export function DnsRadarPanel({
               }}
             />
           </div>
+
+          {/* Email Spoofing & CA Authorization Posture (SPF / DMARC / CAA) */}
+          {result.domainSecurity && (
+            <div className="rounded-xl bg-canvas-elevated border border-stroke p-5 shadow-panel">
+              <div className="flex items-center gap-2 pb-3 mb-3.5 border-b border-stroke">
+                <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                <h2 dir={proseDir} className="text-sm font-bold text-ink">
+                  {t.dns.emailSecTitle}
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                {/* SPF Card */}
+                <div className="p-3.5 rounded-xl bg-canvas-subtle/80 border border-stroke space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span dir={proseDir} className="text-xs font-bold text-ink">
+                      {t.dns.spfTitle}
+                    </span>
+                    {result.domainSecurity.spf.present ? (
+                      <span
+                        dir={proseDir}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                          result.domainSecurity.spf.policy === "hardfail" ||
+                          result.domainSecurity.spf.policy === "softfail"
+                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/25"
+                        }`}
+                      >
+                        <CheckCircle2 className="w-3 h-3 shrink-0" />
+                        <span className="font-mono ltr-data">
+                          {result.domainSecurity.spf.policy === "hardfail"
+                            ? "-all"
+                            : result.domainSecurity.spf.policy === "softfail"
+                              ? "~all"
+                              : t.dns.configured}
+                        </span>
+                      </span>
+                    ) : (
+                      <span
+                        dir={proseDir}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25"
+                      >
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>{t.dns.notConfigured}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] font-mono text-ink-secondary break-all ltr-data line-clamp-2">
+                    {result.domainSecurity.spf.record ?? "—"}
+                  </div>
+                </div>
+
+                {/* DMARC Card */}
+                <div className="p-3.5 rounded-xl bg-canvas-subtle/80 border border-stroke space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span dir={proseDir} className="text-xs font-bold text-ink">
+                      {t.dns.dmarcTitle}
+                    </span>
+                    {result.domainSecurity.dmarc.present ? (
+                      <span
+                        dir={proseDir}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                          result.domainSecurity.dmarc.policy === "reject" ||
+                          result.domainSecurity.dmarc.policy === "quarantine"
+                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/25"
+                        }`}
+                      >
+                        <CheckCircle2 className="w-3 h-3 shrink-0" />
+                        <span className="font-mono ltr-data">
+                          {result.domainSecurity.dmarc.policy
+                            ? `p=${result.domainSecurity.dmarc.policy}`
+                            : t.dns.configured}
+                        </span>
+                      </span>
+                    ) : (
+                      <span
+                        dir={proseDir}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25"
+                      >
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        <span>{t.dns.notConfigured}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] font-mono text-ink-secondary break-all ltr-data line-clamp-2">
+                    {result.domainSecurity.dmarc.record ?? "—"}
+                  </div>
+                </div>
+
+                {/* CAA Card */}
+                <div className="p-3.5 rounded-xl bg-canvas-subtle/80 border border-stroke space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span dir={proseDir} className="text-xs font-bold text-ink">
+                      {t.dns.caaTitle}
+                    </span>
+                    {result.domainSecurity.caa.present ? (
+                      <span
+                        dir={proseDir}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                      >
+                        <CheckCircle2 className="w-3 h-3 shrink-0" />
+                        <span>{t.dns.configured}</span>
+                      </span>
+                    ) : (
+                      <span
+                        dir={proseDir}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-500/15 text-ink-secondary border border-stroke"
+                      >
+                        <span>{t.dns.notConfigured}</span>
+                      </span>
+                    )}
+                  </div>
+                  {result.domainSecurity.caa.present ? (
+                    <div className="text-[11px] font-mono text-ink-secondary break-all ltr-data line-clamp-2">
+                      {result.domainSecurity.caa.issuers.join(", ")}
+                    </div>
+                  ) : (
+                    <div
+                      dir={proseDir}
+                      className={`text-[11px] text-ink-muted ${isAr ? "text-right" : ""}`}
+                    >
+                      {t.dns.caaOpenNote}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* DNS Zone Records & Per-Pulse Log */}
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
@@ -506,6 +740,21 @@ export function DnsRadarPanel({
                       onCopy={() => handleCopy(`txt-${i}`, txt)}
                     />
                   ))}
+
+                {(activeTab === "ALL" || activeTab === "CAA") &&
+                  (result.records.CAA ?? []).map((caa, i) => {
+                    const formatted = `${caa.critical} ${caa.tag} "${caa.value}"`;
+                    return (
+                      <RecordRow
+                        key={`caa-${i}`}
+                        type="CAA"
+                        badgeColor="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                        value={formatted}
+                        copied={copiedKey === `caa-${i}`}
+                        onCopy={() => handleCopy(`caa-${i}`, formatted)}
+                      />
+                    );
+                  })}
 
                 {activeTab !== "ALL" && result.recordErrors?.[activeTab as DnsRecordTypeKey] ? (
                   <div className="p-4 text-center text-xs text-amber-600 dark:text-amber-400 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center gap-2">

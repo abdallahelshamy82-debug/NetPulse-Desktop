@@ -9,9 +9,14 @@ import {
   Cpu,
   History,
   Activity,
+  Download,
+  ArrowDown,
+  ArrowUp,
 } from "lucide-react";
 import type { Dictionary, Locale } from "@/lib/i18n";
 import type { SystemTelemetryResult } from "@/types/telemetry";
+import { formatByteRate } from "@/lib/cn";
+import { DESKTOP_RELEASE_URL } from "@/components/shell/DesktopTitleBar";
 
 export type ModuleKey = "audit" | "dns" | "ports" | "system" | "history";
 
@@ -38,8 +43,10 @@ export const DesktopSidebar = React.memo(function DesktopSidebar({
   mobileOpen,
   onCloseMobile,
 }: DesktopSidebarProps) {
-  const proseDir = lang === "ar" ? "rtl" : "ltr";
-  const diagnosticItems: {
+  const isAr = lang === "ar";
+  const proseDir = isAr ? "rtl" : "ltr";
+
+  const allDiagnosticItems: {
     key: ModuleKey;
     label: string;
     sub: string;
@@ -63,12 +70,16 @@ export const DesktopSidebar = React.memo(function DesktopSidebar({
       sub: t.nav.portsShort,
       icon: Network,
     },
-    {
-      key: "system",
-      label: t.nav.system,
-      sub: t.nav.systemShort,
-      icon: Cpu,
-    },
+    ...(systemCloudDisabled
+      ? []
+      : [
+          {
+            key: "system" as const,
+            label: t.nav.system,
+            sub: t.nav.systemShort,
+            icon: Cpu,
+          },
+        ]),
   ];
 
   const handleSelect = (key: ModuleKey) => {
@@ -88,7 +99,7 @@ export const DesktopSidebar = React.memo(function DesktopSidebar({
             <span dir={proseDir}>{t.nav.sectionDiagnostics}</span>
           </div>
           <nav className="space-y-1">
-            {diagnosticItems.map((item) => {
+            {allDiagnosticItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeModule === item.key;
               return (
@@ -171,34 +182,54 @@ export const DesktopSidebar = React.memo(function DesktopSidebar({
         </div>
       </div>
 
-      {/* Live Local Hardware Mini-Monitor */}
+      {/* Bottom Footer: Live Hardware Vitals on Desktop/Local OR Desktop Download Card on Cloud Web */}
       <div className="p-3 border-t border-stroke bg-canvas-subtle/40">
-        <button
-          type="button"
-          onClick={() => handleSelect("system")}
-          className="w-full text-left p-3 rounded-xl bg-canvas border border-stroke hover:border-cyan-500/35 transition-colors space-y-2.5"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-ink-muted">
-              <Activity className="w-3 h-3 text-emerald-500" />
-              {t.system.hostVitals}
-            </span>
-            <span className="text-[10px] font-mono text-ink-muted truncate max-w-[100px] inline-block ltr-data">
-              {systemCloudDisabled
-                ? t.system.desktopOnlyBadge
-                : (systemTelemetry?.hostname ?? t.system.localHost)}
-            </span>
-          </div>
-
-          {systemCloudDisabled ? (
-            <div className="text-[11px] text-ink-secondary py-1">
-              {t.system.desktopOnlyBadge}
+        {systemCloudDisabled ? (
+          <div className="p-3 rounded-xl bg-canvas border border-cyan-500/25 space-y-2">
+            <div
+              dir={proseDir}
+              className={`text-xs font-bold text-ink leading-snug ${isAr ? "text-right" : ""}`}
+            >
+              {t.system.desktopPromoTitle}
             </div>
-          ) : (
+            <p
+              dir={proseDir}
+              className={`text-[10px] text-ink-secondary leading-relaxed ${isAr ? "text-right" : ""}`}
+            >
+              {t.system.desktopPromoDesc}
+            </p>
+            <a
+              href={DESKTOP_RELEASE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full h-8 px-3 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-cyan-600 dark:text-cyan-400 text-[11px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span dir={proseDir}>{t.controls.downloadDesktop}</span>
+            </a>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => handleSelect("system")}
+            className="w-full text-left p-3 rounded-xl bg-canvas border border-stroke hover:border-cyan-500/35 transition-colors space-y-2.5"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+                <Activity className="w-3 h-3 text-emerald-500" />
+                <span dir={proseDir}>{t.system.hostVitals}</span>
+              </span>
+              <span className="text-[10px] font-mono text-ink-muted truncate max-w-[100px] inline-block ltr-data">
+                {systemTelemetry?.hostname ?? t.system.localHost}
+              </span>
+            </div>
+
             <div className="space-y-1.5">
               <div>
                 <div className="flex justify-between text-[10px] font-mono mb-0.5">
-                  <span className="text-ink-muted">{t.system.cpuShort}</span>
+                  <span dir={proseDir} className="text-ink-muted">
+                    {t.system.cpuShort}
+                  </span>
                   <span className="text-cyan-500 font-semibold inline-block ltr-data">
                     {systemTelemetry ? `${systemTelemetry.cpu.usagePercent}%` : "—"}
                   </span>
@@ -215,7 +246,9 @@ export const DesktopSidebar = React.memo(function DesktopSidebar({
 
               <div>
                 <div className="flex justify-between text-[10px] font-mono mb-0.5">
-                  <span className="text-ink-muted">{t.system.ramShort}</span>
+                  <span dir={proseDir} className="text-ink-muted">
+                    {t.system.ramShort}
+                  </span>
                   <span className="text-emerald-500 font-semibold inline-block ltr-data">
                     {systemTelemetry ? `${systemTelemetry.memory.usagePercent}%` : "—"}
                   </span>
@@ -229,9 +262,22 @@ export const DesktopSidebar = React.memo(function DesktopSidebar({
                   />
                 </div>
               </div>
+
+              {systemTelemetry?.networkThroughput && (
+                <div className="pt-1 border-t border-stroke/70 flex items-center justify-between text-[10px] font-mono ltr-data">
+                  <span className="inline-flex items-center gap-0.5 text-emerald-500">
+                    <ArrowDown className="w-2.5 h-2.5" />
+                    {formatByteRate(systemTelemetry.networkThroughput.rxBytesPerSec)}
+                  </span>
+                  <span className="inline-flex items-center gap-0.5 text-cyan-500">
+                    <ArrowUp className="w-2.5 h-2.5" />
+                    {formatByteRate(systemTelemetry.networkThroughput.txBytesPerSec)}
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-        </button>
+          </button>
+        )}
       </div>
     </aside>
   );

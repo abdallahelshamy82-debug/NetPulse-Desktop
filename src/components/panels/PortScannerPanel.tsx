@@ -12,6 +12,8 @@ import {
   ShieldAlert,
   AlertCircle,
   AlertTriangle,
+  Cloud,
+  Monitor,
 } from "lucide-react";
 import type { PortScanResult, PortScanTimeoutMode, PortStatus } from "@/types/telemetry";
 import type { Dictionary, Locale } from "@/lib/i18n";
@@ -344,6 +346,36 @@ export function PortScannerPanel({
           transition={{ duration: 0.3 }}
           className="space-y-5"
         >
+          {/* Probe Vantage Strip */}
+          {result.probeVantage && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-canvas-elevated border border-stroke text-xs">
+              <span
+                dir={proseDir}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-medium border ${
+                  result.probeVantage.mode === "cloud"
+                    ? "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/25"
+                    : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
+                }`}
+              >
+                {result.probeVantage.mode === "cloud" ? (
+                  <Cloud className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <Monitor className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>
+                  {result.probeVantage.mode === "cloud"
+                    ? `${t.common.vantageCloud}${
+                        result.probeVantage.region ? ` (${result.probeVantage.region})` : ""
+                      }`
+                    : t.common.vantageLocal}
+                </span>
+              </span>
+              <span className="text-[11px] font-mono text-ink-muted ltr-data">
+                {result.hostname} → {result.resolvedIp}
+              </span>
+            </div>
+          )}
+
           {/* Summary KPI Row */}
           <div
             className={`grid grid-cols-2 gap-4 ${
@@ -455,7 +487,14 @@ export function PortScannerPanel({
                           </span>
                         </span>
                       </td>
-                      <td className="py-3 px-4 font-medium text-ink">{item.service}</td>
+                      <td className="py-3 px-4 font-medium text-ink">
+                        <div>{item.service}</div>
+                        {item.banner && (
+                          <div className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400 mt-0.5 break-all ltr-data">
+                            {item.banner}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-3 px-4">{renderPortBadge(item.status, item.errorCode)}</td>
                       <td className="py-3 px-4 text-end font-mono text-ink-secondary ltr-data">
                         {item.latencyMs !== null ? `${item.latencyMs} ms` : "—"}

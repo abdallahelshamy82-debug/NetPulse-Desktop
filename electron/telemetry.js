@@ -8,9 +8,18 @@ let prevCpuSnapshot = null;
 let lastCpuResult = null;
 
 let typeperfProcess = null;
-let pdhState = { value: null, lastUpdatedAt: 0 };
+let pdhColRoles = [];
+let pdhState = {
+  cpuUtility: null,
+  cpuPerfPercent: null,
+  rxBytesPerSec: null,
+  txBytesPerSec: null,
+  lastUpdatedAt: 0,
+};
 let pdhLineBuffer = "";
 let cachedServerRssBytes = 0;
+
+let prevLinuxNet = null;
 
 function snapshotCpus() {
   return os.cpus().map((cpu) => {
@@ -83,28 +92,91 @@ async function sampleCpuDelta() {
   return result;
 }
 
-function parseTypeperfLine(line) {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed.includes("PDH-CSV")) return null;
+function splitCsvRow(line) {
+  const cells = [];
+  const regex = /"([^"]*)"|([^,]+)/g;
+  let match;
+  while ((match = regex.exec(line)) !== null) {
+    cells.push((match[1] !== undefined ? match[1] : match[2] || "").trim());
+  }
+  return cells;
+}
 
-  let rawValue = null;
-  const quotedMatch = /"([^"]+)"\s*$/.exec(trimmed);
-  if (quotedMatch) {
-    rawValue = quotedMatch[1].trim();
-  } else {
-    const parts = trimmed.split(",");
-    if (parts.length >= 2) {
-      rawValue = parts[parts.length - 1].replace(/^"+|"+$/g, "").trim();
+function parsePdhNumber(raw) {
+  if (!raw) return null;
+  const normalized = /^\d+,\d+$/.test(raw) ? raw.replace(",", ".") : raw;
+  const num = Number(normalized);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+}
+
+function processTypeperfLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  const cells = splitCsvRow(trimmed);
+  if (cells.length < 2) return;
+
+  if (cells[0].includes("PDH-CSV")) {
+    pdhColRoles = cells.map((header, idx) => {
+      if (idx === 0) return "timestamp";
+      const lower = header.toLowerCase();
+      if (lower.endsWith("\\% processor utility")) return "cpuUtility";
+      if (lower.endsWith("\\% processor performance")) return "cpuPerf";
+      const ignoredAdapter = /loopback|isatap|teredo/i.test(lower);
+      if (!ignoredAdapter && lower.endsWith("\\bytes received/sec")) return "netRx";
+      if (!ignoredAdapter && lower.endsWith("\\bytes sent/sec")) return "netTx";
+      return "ignore";
+    });
+    return;
+  }
+
+  if (pdhColRoles.length === 0) {
+    // Fallback if header was missed: col 1 = utility, col 2 = perf
+    const util = parsePdhNumber(cells[1]);
+    if (util !== null) {
+      pdhState = {
+        ...pdhState,
+        cpuUtility: Number(Math.min(100, Math.max(0, util)).toFixed(1)),
+        lastUpdatedAt: Date.now(),
+      };
+    }
+    return;
+  }
+
+  let cpuUtil = null;
+  let cpuPerf = null;
+  let rxSum = 0;
+  let txSum = 0;
+  let sawNet = false;
+
+  for (let i = 1; i < cells.length && i < pdhColRoles.length; i++) {
+    const role = pdhColRoles[i];
+    if (role === "ignore") continue;
+    const val = parsePdhNumber(cells[i]);
+    if (val === null) continue;
+
+    if (role === "cpuUtility") {
+      cpuUtil = Number(Math.min(100, Math.max(0, val)).toFixed(1));
+    } else if (role === "cpuPerf") {
+      cpuPerf = val > 0 ? val : null;
+    } else if (role === "netRx") {
+      rxSum += val;
+      sawNet = true;
+    } else if (role === "netTx") {
+      txSum += val;
+      sawNet = true;
     }
   }
 
-  if (!rawValue) return null;
-
-  const normalized = /^\d+,\d+$/.test(rawValue) ? rawValue.replace(",", ".") : rawValue;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-
-  return Number(Math.min(100, Math.max(0, parsed)).toFixed(1));
+  if (cpuUtil !== null || sawNet) {
+    pdhState = {
+      cpuUtility: cpuUtil !== null ? cpuUtil : pdhState.cpuUtility,
+      cpuPerfPercent: cpuPerf !== null ? cpuPerf : pdhState.cpuPerfPercent,
+      rxBytesPerSec: sawNet ? Math.round(rxSum) : pdhState.rxBytesPerSec,
+      txBytesPerSec: sawNet ? Math.round(txSum) : pdhState.txBytesPerSec,
+      lastUpdatedAt: Date.now(),
+    };
+  }
 }
 
 function startWindowsPdhCollector() {
@@ -115,9 +187,17 @@ function startWindowsPdhCollector() {
     const typeperfPath = path.join(systemRoot, "System32", "typeperf.exe");
     const typeperfBin = fs.existsSync(typeperfPath) ? typeperfPath : "typeperf";
 
+    pdhColRoles = [];
     const child = spawn(
       typeperfBin,
-      ["\\Processor Information(_Total)\\% Processor Utility", "-si", "2"],
+      [
+        "\\Processor Information(_Total)\\% Processor Utility",
+        "\\Processor Information(_Total)\\% Processor Performance",
+        "\\Network Interface(*)\\Bytes Received/sec",
+        "\\Network Interface(*)\\Bytes Sent/sec",
+        "-si",
+        "2",
+      ],
       {
         windowsHide: true,
         stdio: ["ignore", "pipe", "ignore"],
@@ -134,13 +214,7 @@ function startWindowsPdhCollector() {
         pdhLineBuffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          const val = parseTypeperfLine(line);
-          if (val !== null) {
-            pdhState = {
-              value: val,
-              lastUpdatedAt: Date.now(),
-            };
-          }
+          processTypeperfLine(line);
         }
       });
     }
@@ -170,6 +244,7 @@ function stopTelemetryCollector() {
     }
   }
   typeperfProcess = null;
+  pdhColRoles = [];
   pdhLineBuffer = "";
   cachedServerRssBytes = 0;
 }
@@ -202,7 +277,11 @@ function fetchServerRssBytes(serverUrl) {
         res.on("end", () => {
           try {
             const parsed = JSON.parse(body);
-            if (typeof parsed?.rssBytes === "number" && Number.isFinite(parsed.rssBytes) && parsed.rssBytes > 0) {
+            if (
+              typeof parsed?.rssBytes === "number" &&
+              Number.isFinite(parsed.rssBytes) &&
+              parsed.rssBytes > 0
+            ) {
               cachedServerRssBytes = parsed.rssBytes;
               done(parsed.rssBytes);
               return;
@@ -256,8 +335,12 @@ async function getMemoryStats(electronApp, serverUrl) {
       if (Array.isArray(metrics)) {
         let totalKb = 0;
         for (const metric of metrics) {
-          if (metric && metric.memory && typeof metric.memory.workingSetSize === "number") {
-            totalKb += metric.memory.workingSetSize;
+          if (metric && metric.memory) {
+            if (typeof metric.memory.privateBytes === "number" && metric.memory.privateBytes > 0) {
+              totalKb += metric.memory.privateBytes;
+            } else if (typeof metric.memory.workingSetSize === "number") {
+              totalKb += metric.memory.workingSetSize;
+            }
           }
         }
         appWorkingSetBytes = totalKb * 1024 + serverRssBytes;
@@ -277,6 +360,65 @@ async function getMemoryStats(electronApp, serverUrl) {
     processHeapUsedBytes: procMem.heapUsed,
     appWorkingSetBytes,
   };
+}
+
+async function getDiskStats() {
+  try {
+    if (typeof fs.promises.statfs !== "function") return null;
+    const mount =
+      process.platform === "win32" ? `${process.env.SystemDrive || "C:"}\\` : "/";
+    const stat = await fs.promises.statfs(mount);
+    const totalBytes = Number(stat.bsize) * Number(stat.blocks);
+    const freeBytes = Number(stat.bsize) * Number(stat.bavail ?? stat.bfree);
+    if (!Number.isFinite(totalBytes) || totalBytes <= 0) return null;
+    const usedBytes = Math.max(0, totalBytes - freeBytes);
+    const usagePercent = Number(((usedBytes / totalBytes) * 100).toFixed(1));
+    return {
+      mount: process.platform === "win32" ? mount.replace(/\\$/, "") : mount,
+      totalBytes,
+      usedBytes,
+      freeBytes,
+      usagePercent,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function sampleLinuxNetworkThroughput() {
+  if (process.platform !== "linux") return null;
+  try {
+    const raw = await fs.promises.readFile("/proc/net/dev", "utf8");
+    const lines = raw.split(/\r?\n/).slice(2);
+    let rxBytes = 0;
+    let txBytes = 0;
+    for (const line of lines) {
+      const idx = line.indexOf(":");
+      if (idx === -1) continue;
+      const iface = line.slice(0, idx).trim();
+      if (!iface || iface === "lo") continue;
+      const cols = line.slice(idx + 1).trim().split(/\s+/);
+      if (cols.length >= 9) {
+        rxBytes += Number(cols[0]) || 0;
+        txBytes += Number(cols[8]) || 0;
+      }
+    }
+    const now = Date.now();
+    if (!prevLinuxNet) {
+      prevLinuxNet = { rxBytes, txBytes, at: now };
+      return { rxBytesPerSec: 0, txBytesPerSec: 0 };
+    }
+    const elapsedSec = (now - prevLinuxNet.at) / 1000;
+    if (elapsedSec <= 0.2) {
+      return { rxBytesPerSec: 0, txBytesPerSec: 0 };
+    }
+    const rxRate = Math.max(0, Math.round((rxBytes - prevLinuxNet.rxBytes) / elapsedSec));
+    const txRate = Math.max(0, Math.round((txBytes - prevLinuxNet.txBytes) / elapsedSec));
+    prevLinuxNet = { rxBytes, txBytes, at: now };
+    return { rxBytesPerSec: rxRate, txBytesPerSec: txRate };
+  } catch {
+    return null;
+  }
 }
 
 function collectNetworkInterfaces() {
@@ -332,19 +474,35 @@ async function getSystemTelemetry(electronApp, serverUrl) {
     startWindowsPdhCollector();
   }
 
-  const [cpuDelta, memory] = await Promise.all([
+  const [cpuDelta, memory, disk, linuxNet] = await Promise.all([
     sampleCpuDelta(),
     getMemoryStats(electronApp, serverUrl),
+    getDiskStats(),
+    sampleLinuxNetworkThroughput(),
   ]);
 
   const cpus = os.cpus();
+  const baseSpeedMhz = cpus[0]?.speed || 0;
   const pdhFresh =
     process.platform === "win32" &&
-    pdhState.value !== null &&
-    Date.now() - pdhState.lastUpdatedAt < 6000;
+    pdhState.cpuUtility !== null &&
+    Date.now() - pdhState.lastUpdatedAt < 6500;
 
-  const usagePercent = pdhFresh ? pdhState.value : cpuDelta.overallPercent;
+  const usagePercent = pdhFresh ? pdhState.cpuUtility : cpuDelta.overallPercent;
   const metricSource = pdhFresh ? "windows-pdh" : "os-delta";
+  const currentSpeedMhz =
+    pdhFresh && pdhState.cpuPerfPercent !== null && baseSpeedMhz > 0
+      ? Math.round(baseSpeedMhz * (pdhState.cpuPerfPercent / 100))
+      : baseSpeedMhz || null;
+
+  const networkThroughput =
+    pdhFresh && pdhState.rxBytesPerSec !== null && pdhState.txBytesPerSec !== null
+      ? {
+          rxBytesPerSec: pdhState.rxBytesPerSec,
+          txBytesPerSec: pdhState.txBytesPerSec,
+        }
+      : linuxNet;
+
   const loadAvg =
     process.platform === "win32"
       ? null
@@ -363,13 +521,16 @@ async function getSystemTelemetry(electronApp, serverUrl) {
     cpu: {
       model: cpus[0]?.model.trim() || "Unknown Processor",
       coresCount: cpus.length,
-      speedMhz: cpus[0]?.speed || 0,
+      speedMhz: baseSpeedMhz,
+      currentSpeedMhz,
       usagePercent,
       metricSource,
       loadAvg,
       perCore: cpuDelta.perCore,
     },
     memory,
+    disk,
+    networkThroughput,
     networkInterfaces: collectNetworkInterfaces(),
   };
 }

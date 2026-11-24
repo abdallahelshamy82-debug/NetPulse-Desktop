@@ -1,5 +1,7 @@
 import dns from "dns";
 import net from "net";
+import { performance } from "perf_hooks";
+import type { ProbeVantage } from "@/types/telemetry";
 
 export type NetworkGuardErrorCode =
   | "SSRF_BLOCKED"
@@ -21,6 +23,14 @@ export class NetworkGuardError extends Error {
 
 export function isCloudEnvironment(): boolean {
   return process.env.VERCEL === "1" || process.env.NETPULSE_CLOUD_MODE === "1";
+}
+
+export function getProbeVantage(): ProbeVantage {
+  if (isCloudEnvironment()) {
+    const region = process.env.VERCEL_REGION?.trim().toUpperCase() || "CLOUD";
+    return { mode: "cloud", region };
+  }
+  return { mode: "local", region: null };
 }
 
 export function isPrivateTargetsAllowed(): boolean {
@@ -192,11 +202,22 @@ async function resolve4WithTimeout(host: string, timeoutMs: number): Promise<str
   }
 }
 
-export async function resolveAllValidatedHosts(
+export interface ResolveHostsOptions {
+  enrichIpv4?: boolean;
+}
+
+export interface PureTimedHostResolution {
+  candidates: ValidatedHostAddress[];
+  pureLookupMs: number | null;
+}
+
+export async function resolveValidatedHostsDetailed(
   hostname: string,
   allowPrivate: boolean,
-  timeoutMs = 2500
-): Promise<ValidatedHostAddress[]> {
+  timeoutMs = 2500,
+  options?: ResolveHostsOptions
+): Promise<PureTimedHostResolution> {
+  const enrichIpv4 = options?.enrichIpv4 ?? true;
   const cleanHost = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
 
   if (
@@ -219,16 +240,20 @@ export async function resolveAllValidatedHosts(
         "SSRF_BLOCKED"
       );
     }
-    return [
-      {
-        address: cleanHost,
-        family: literalIpType,
-      },
-    ];
+    return {
+      candidates: [
+        {
+          address: cleanHost,
+          family: literalIpType,
+        },
+      ],
+      pureLookupMs: null,
+    };
   }
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let records: dns.LookupAddress[];
+  const lookupStart = performance.now();
 
   try {
     records = await Promise.race([
@@ -260,6 +285,9 @@ export async function resolveAllValidatedHosts(
     }
   }
 
+  // Stop pure lookup timer immediately BEFORE any optional secondary Anycast A-record enrichment
+  const pureLookupMs = Number(Math.max(0, performance.now() - lookupStart).toFixed(1));
+
   if (!Array.isArray(records) || records.length === 0) {
     throw new NetworkGuardError(
       `No DNS address records found for "${cleanHost}".`,
@@ -268,16 +296,17 @@ export async function resolveAllValidatedHosts(
     );
   }
 
-  // Enrich with additional A records if OS lookup cache only surfaced one IPv4
-  const initialIpv4Count = new Set(
-    records.filter((r) => r.family === 4).map((r) => r.address)
-  ).size;
   const combinedRecords: dns.LookupAddress[] = [...records];
-  if (initialIpv4Count < 2) {
-    const extraIpv4s = await resolve4WithTimeout(cleanHost, 800);
-    for (const ip of extraIpv4s) {
-      if (net.isIPv4(ip)) {
-        combinedRecords.push({ address: ip, family: 4 });
+  if (enrichIpv4) {
+    const initialIpv4Count = new Set(
+      records.filter((r) => r.family === 4).map((r) => r.address)
+    ).size;
+    if (initialIpv4Count < 2) {
+      const extraIpv4s = await resolve4WithTimeout(cleanHost, 800);
+      for (const ip of extraIpv4s) {
+        if (net.isIPv4(ip)) {
+          combinedRecords.push({ address: ip, family: 4 });
+        }
       }
     }
   }
@@ -294,7 +323,6 @@ export async function resolveAllValidatedHosts(
     }
   }
 
-  // Deduplicate keeping IPv4 addresses first, then IPv6
   const seen = new Set<string>();
   const ipv4List: ValidatedHostAddress[] = [];
   const ipv6List: ValidatedHostAddress[] = [];
@@ -319,7 +347,20 @@ export async function resolveAllValidatedHosts(
       "DNS_FAILED"
     );
   }
-  return ordered;
+  return {
+    candidates: ordered,
+    pureLookupMs,
+  };
+}
+
+export async function resolveAllValidatedHosts(
+  hostname: string,
+  allowPrivate: boolean,
+  timeoutMs = 2500,
+  options?: ResolveHostsOptions
+): Promise<ValidatedHostAddress[]> {
+  const res = await resolveValidatedHostsDetailed(hostname, allowPrivate, timeoutMs, options);
+  return res.candidates;
 }
 
 export async function selectReachableHost(

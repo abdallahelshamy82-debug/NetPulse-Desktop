@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Terminal } from "lucide-react";
+import { Terminal, Cloud } from "lucide-react";
 import { translations, type Locale } from "@/lib/i18n";
 import {
   clearScanHistory,
@@ -29,12 +29,16 @@ import { SystemTelemetryPanel } from "@/components/panels/SystemTelemetryPanel";
 import { HistoryPanel } from "@/components/panels/HistoryPanel";
 import { PrintableReport } from "@/components/report/PrintableReport";
 
+const VALID_TABS = new Set<ModuleKey>(["audit", "dns", "ports", "system", "history"]);
+
 export function NetPulseWorkspace() {
   const [lang, setLang] = useState<Locale>("en");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [isElectron, setIsElectron] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("audit");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [urlHydrated, setUrlHydrated] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const mainScrollRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -72,6 +76,7 @@ export function NetPulseWorkspace() {
   const [historyEntries, setHistoryEntries] = useState<ScanHistoryEntry[]>([]);
   const [reportOpen, setReportOpen] = useState(false);
   const [fullScanLoading, setFullScanLoading] = useState(false);
+  const [fullScanStage, setFullScanStage] = useState<string | null>(null);
 
   const t = translations[lang];
 
@@ -82,7 +87,13 @@ export function NetPulseWorkspace() {
     return parsed.ok ? parsed.data.hostname : trimmed;
   }, [target]);
 
-  // Hydrate persisted preferences, Electron bridge detection, and scan history
+  const observedProbeRegion =
+    auditResult?.probeVantage?.region ??
+    dnsResult?.probeVantage?.region ??
+    portResult?.probeVantage?.region ??
+    null;
+
+  // Hydrate persisted preferences, Electron bridge detection, URL query params, and scan history
   useEffect(() => {
     try {
       const savedTheme = window.localStorage.getItem("netpulse_theme_v1");
@@ -97,12 +108,56 @@ export function NetPulseWorkspace() {
       // Ignore storage access failures
     }
 
-    if (window.netpulseElectron?.isElectron) {
+    const electronDetected = Boolean(window.netpulseElectron?.isElectron);
+    if (electronDetected) {
       setIsElectron(true);
     }
 
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const qTarget = params.get("target")?.trim();
+      if (qTarget) {
+        const parsed = parseTargetHost(qTarget);
+        if (parsed.ok) {
+          setTarget(parsed.data.hostname);
+        }
+      }
+      const qTab = params.get("tab")?.trim() as ModuleKey | undefined;
+      if (qTab && VALID_TABS.has(qTab)) {
+        setActiveModule(qTab);
+      }
+    } catch {
+      // Ignore URL parse errors
+    }
+
     setHistoryEntries(loadScanHistory());
+    setUrlHydrated(true);
   }, []);
+
+  // Keep web URL synchronized with target & active tab so links are directly shareable
+  useEffect(() => {
+    if (!urlHydrated || isElectron) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (displayTarget) {
+        params.set("target", displayTarget);
+      } else {
+        params.delete("target");
+      }
+      params.set("tab", activeModule);
+      const nextUrl = `${window.location.pathname}?${params.toString()}`;
+      window.history.replaceState(null, "", nextUrl);
+    } catch {
+      // Ignore history API restrictions
+    }
+  }, [urlHydrated, isElectron, displayTarget, activeModule]);
+
+  // If Cloud Web disables local hardware telemetry, redirect away from hidden system tab
+  useEffect(() => {
+    if (systemCloudDisabled && activeModule === "system") {
+      setActiveModule("audit");
+    }
+  }, [systemCloudDisabled, activeModule]);
 
   // Sync HTML class & dir attributes on theme / language changes
   useEffect(() => {
@@ -129,6 +184,17 @@ export function NetPulseWorkspace() {
       // Ignore
     }
   }, [lang]);
+
+  const handleCopyShareLink = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    if (displayTarget) params.set("target", displayTarget);
+    params.set("tab", activeModule);
+    const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    navigator.clipboard?.writeText(shareUrl).catch(() => undefined);
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 1600);
+  }, [displayTarget, activeModule]);
 
   // Safe JSON response parser for API diagnostics (handles 504 HTML/text gateways cleanly)
   const readJsonSafe = useCallback(
@@ -290,9 +356,9 @@ export function NetPulseWorkspace() {
 
   // Tool 1: Live SSL & Security Audit
   const runAudit = useCallback(
-    async (targetOverride?: string) => {
+    async (targetOverride?: string, opts?: { silentHistory?: boolean }): Promise<AuditResult | null> => {
       const host = (targetOverride ?? target).trim();
-      if (!host) return;
+      if (!host) return null;
       setAuditLoading(true);
       setAuditError(null);
       try {
@@ -303,19 +369,23 @@ export function NetPulseWorkspace() {
         });
         const data = await readJsonSafe<AuditResult>(res);
         setAuditResult(data);
-        const entry: ScanHistoryEntry = {
-          id: `audit-${data.hostname}-${Date.now()}`,
-          type: "audit",
-          hostname: data.hostname,
-          scannedAt: data.scannedAt,
-          grade: data.grade,
-          score: data.score,
-          summary: `${data.ssl.protocol ?? "TLS"} • ${data.ssl.issuer.O || data.ssl.issuer.CN || "Cert"} • ${data.issuesCount.pass}/${data.headers.length} headers`,
-          auditData: data,
-        };
-        setHistoryEntries(saveScanHistoryEntry(entry));
+        if (!opts?.silentHistory) {
+          const entry: ScanHistoryEntry = {
+            id: `audit-${data.hostname}-${Date.now()}`,
+            type: "audit",
+            hostname: data.hostname,
+            scannedAt: data.scannedAt,
+            grade: data.grade,
+            score: data.score,
+            summary: `${data.ssl.protocol ?? "TLS"}${data.ssl.alpnProtocol === "h2" ? " • HTTP/2" : ""} • ${data.ssl.issuer.O || data.ssl.issuer.CN || "Cert"} • ${data.issuesCount.pass}/${data.headers.length} headers`,
+            auditData: data,
+          };
+          setHistoryEntries(saveScanHistoryEntry(entry));
+        }
+        return data;
       } catch (err) {
         setAuditError(err instanceof Error ? err.message : "Audit failed.");
+        return null;
       } finally {
         setAuditLoading(false);
       }
@@ -325,9 +395,12 @@ export function NetPulseWorkspace() {
 
   // Tool 2: DNS Radar & Latency Profiler
   const runDnsPing = useCallback(
-    async (targetOverride?: string) => {
+    async (
+      targetOverride?: string,
+      opts?: { silentHistory?: boolean }
+    ): Promise<DnsPingResult | null> => {
       const host = (targetOverride ?? target).trim();
-      if (!host) return;
+      if (!host) return null;
       setDnsLoading(true);
       setDnsError(null);
       try {
@@ -338,21 +411,25 @@ export function NetPulseWorkspace() {
         });
         const data = await readJsonSafe<DnsPingResult>(res);
         setDnsResult(data);
-        const dnsAvg = data.stats.dns.avg !== null ? `${data.stats.dns.avg}ms` : "—";
-        const tcpAvg = data.stats.tcp.avg !== null ? `${data.stats.tcp.avg}ms` : "—";
-        const ttfbAvg = data.stats.ttfb.avg !== null ? `${data.stats.ttfb.avg}ms` : "—";
-        const entry: ScanHistoryEntry = {
-          id: `dns-${data.hostname}-${Date.now()}`,
-          type: "dns",
-          hostname: data.hostname,
-          scannedAt: data.scannedAt,
-          avgTtfbMs: data.stats.ttfb.avg,
-          summary: `IP ${data.resolvedIp ?? "—"} • DNS ${dnsAvg} • TCP ${tcpAvg} • TTFB ${ttfbAvg}`,
-          dnsData: data,
-        };
-        setHistoryEntries(saveScanHistoryEntry(entry));
+        if (!opts?.silentHistory) {
+          const dnsAvg = data.stats.dns.avg !== null ? `${data.stats.dns.avg}ms` : "—";
+          const tcpAvg = data.stats.tcp.avg !== null ? `${data.stats.tcp.avg}ms` : "—";
+          const ttfbAvg = data.stats.ttfb.avg !== null ? `${data.stats.ttfb.avg}ms` : "—";
+          const entry: ScanHistoryEntry = {
+            id: `dns-${data.hostname}-${Date.now()}`,
+            type: "dns",
+            hostname: data.hostname,
+            scannedAt: data.scannedAt,
+            avgTtfbMs: data.stats.ttfb.avg,
+            summary: `IP ${data.resolvedIp ?? "—"} • DNS ${dnsAvg} • TCP ${tcpAvg} • Wait ${ttfbAvg}`,
+            dnsData: data,
+          };
+          setHistoryEntries(saveScanHistoryEntry(entry));
+        }
+        return data;
       } catch (err) {
         setDnsError(err instanceof Error ? err.message : "DNS Radar failed.");
+        return null;
       } finally {
         setDnsLoading(false);
       }
@@ -365,10 +442,11 @@ export function NetPulseWorkspace() {
     async (
       targetOverride?: string,
       portsOverride?: number[],
-      timeoutOverride?: PortScanTimeoutMode
-    ) => {
+      timeoutOverride?: PortScanTimeoutMode,
+      opts?: { silentHistory?: boolean }
+    ): Promise<PortScanResult | null> => {
       const host = (targetOverride ?? target).trim();
-      if (!host) return;
+      if (!host) return null;
       setPortLoading(true);
       setPortError(null);
       try {
@@ -383,18 +461,22 @@ export function NetPulseWorkspace() {
         });
         const data = await readJsonSafe<PortScanResult>(res);
         setPortResult(data);
-        const entry: ScanHistoryEntry = {
-          id: `ports-${data.hostname}-${Date.now()}`,
-          type: "ports",
-          hostname: data.hostname,
-          scannedAt: data.scannedAt,
-          openPorts: data.summary.open,
-          summary: `${data.summary.open} open / ${data.summary.closed} closed / ${data.summary.filtered} filtered (${data.durationMs}ms)`,
-          portData: data,
-        };
-        setHistoryEntries(saveScanHistoryEntry(entry));
+        if (!opts?.silentHistory) {
+          const entry: ScanHistoryEntry = {
+            id: `ports-${data.hostname}-${Date.now()}`,
+            type: "ports",
+            hostname: data.hostname,
+            scannedAt: data.scannedAt,
+            openPorts: data.summary.open,
+            summary: `${data.summary.open} open / ${data.summary.closed} closed / ${data.summary.filtered} filtered (${data.durationMs}ms)`,
+            portData: data,
+          };
+          setHistoryEntries(saveScanHistoryEntry(entry));
+        }
+        return data;
       } catch (err) {
         setPortError(err instanceof Error ? err.message : "Port scan failed.");
+        return null;
       } finally {
         setPortLoading(false);
       }
@@ -402,14 +484,46 @@ export function NetPulseWorkspace() {
     [target, portTimeoutMode, readJsonSafe]
   );
 
-  // Run Full Diagnostic Suite across Audit + DNS + Ports in parallel
+  // Staged Sequential Full Diagnostic Suite — prevents socket contention & saves 1 unified archive record
   const runFullSuite = useCallback(async () => {
     const host = target.trim();
     if (!host) return;
     setFullScanLoading(true);
     try {
-      await Promise.all([runAudit(host), runDnsPing(host), runPortScan(host)]);
+      setFullScanStage("1/3");
+      const aData = await runAudit(host, { silentHistory: true });
+
+      setFullScanStage("2/3");
+      const dData = await runDnsPing(host, { silentHistory: true });
+
+      setFullScanStage("3/3");
+      const pData = await runPortScan(host, undefined, undefined, { silentHistory: true });
+
+      if (aData || dData || pData) {
+        const hostname = aData?.hostname || dData?.hostname || pData?.hostname || host;
+        const parts: string[] = [];
+        if (aData) parts.push(`SSL ${aData.grade} (${aData.score}/100)`);
+        if (dData && dData.stats.total.avg !== null) parts.push(`RTT ${dData.stats.total.avg}ms`);
+        if (pData) parts.push(`${pData.summary.open} open ports`);
+
+        const unifiedEntry: ScanHistoryEntry = {
+          id: `full-${hostname}-${Date.now()}`,
+          type: "full",
+          hostname,
+          scannedAt: new Date().toISOString(),
+          grade: aData?.grade,
+          score: aData?.score,
+          openPorts: pData?.summary.open,
+          avgTtfbMs: dData?.stats.ttfb.avg,
+          summary: parts.join(" • "),
+          ...(aData ? { auditData: aData } : {}),
+          ...(dData ? { dnsData: dData } : {}),
+          ...(pData ? { portData: pData } : {}),
+        };
+        setHistoryEntries(saveScanHistoryEntry(unifiedEntry));
+      }
     } finally {
+      setFullScanStage(null);
       setFullScanLoading(false);
     }
   }, [target, runAudit, runDnsPing, runPortScan]);
@@ -417,7 +531,7 @@ export function NetPulseWorkspace() {
   // Export Structured JSON Report
   const handleExportJson = useCallback(() => {
     const bundle = {
-      exportedBy: "NetPulse Desktop v1.0.0",
+      exportedBy: isElectron ? "NetPulse Desktop v1.1.0" : "NetPulse Web v1.1.0",
       exportedAt: new Date().toISOString(),
       target,
       audit: auditResult,
@@ -436,11 +550,18 @@ export function NetPulseWorkspace() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [target, auditResult, dnsResult, portResult]);
+  }, [isElectron, target, auditResult, dnsResult, portResult]);
 
   // History actions
   const handleLoadHistoryEntry = (entry: ScanHistoryEntry) => {
     setTarget(entry.hostname);
+    if (entry.type === "full") {
+      if (entry.auditData) setAuditResult(entry.auditData);
+      if (entry.dnsData) setDnsResult(entry.dnsData);
+      if (entry.portData) setPortResult(entry.portData);
+      setActiveModule(entry.auditData ? "audit" : entry.dnsData ? "dns" : "ports");
+      return;
+    }
     if (entry.type === "audit" && entry.auditData) {
       setAuditResult(entry.auditData);
       setActiveModule("audit");
@@ -466,19 +587,27 @@ export function NetPulseWorkspace() {
 
   return (
     <>
-      <div dir="ltr" className="no-print h-screen w-screen flex flex-col overflow-hidden bg-canvas text-ink">
-        {/* Custom Native Desktop Titlebar */}
+      <div
+        dir="ltr"
+        className="no-print h-[100dvh] w-screen flex flex-col overflow-hidden bg-canvas text-ink"
+      >
+        {/* Adaptive Header: Custom Windows Titlebar in Electron, Clean Web Navbar in Browser */}
         <DesktopTitleBar
           t={t}
           lang={lang}
           theme={theme}
           isElectron={isElectron}
+          cloudMode={systemCloudDisabled}
+          probeRegion={observedProbeRegion}
           hasReportData={hasReportData}
           fullScanLoading={fullScanLoading}
+          fullScanStage={fullScanStage}
+          shareCopied={shareCopied}
           onToggleTheme={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
           onToggleLang={() => setLang((prev) => (prev === "en" ? "ar" : "en"))}
           onOpenReport={() => setReportOpen(true)}
           onRunFullSuite={runFullSuite}
+          onCopyShareLink={handleCopyShareLink}
           onToggleMobileMenu={() => setMobileMenuOpen((v) => !v)}
         />
 
@@ -518,7 +647,7 @@ export function NetPulseWorkspace() {
                       result={auditResult}
                       loading={auditLoading}
                       error={auditError}
-                      onRunAudit={runAudit}
+                      onRunAudit={(override) => void runAudit(override)}
                       onOpenReport={() => setReportOpen(true)}
                       onExportJson={handleExportJson}
                     />
@@ -535,7 +664,7 @@ export function NetPulseWorkspace() {
                       error={dnsError}
                       pulsesCount={pulsesCount}
                       onPulsesCountChange={setPulsesCount}
-                      onRunDnsPing={runDnsPing}
+                      onRunDnsPing={(override) => void runDnsPing(override)}
                     />
                   )}
 
@@ -552,7 +681,7 @@ export function NetPulseWorkspace() {
                       cloudMode={systemCloudDisabled}
                       timeoutMode={portTimeoutMode}
                       onTimeoutModeChange={setPortTimeoutMode}
-                      onRunPortScan={runPortScan}
+                      onRunPortScan={(tOv, pOv, mOv) => void runPortScan(tOv, pOv, mOv)}
                     />
                   )}
 
@@ -587,7 +716,7 @@ export function NetPulseWorkspace() {
           </main>
         </div>
 
-        {/* Bottom Desktop Status Bar */}
+        {/* Bottom Status Bar */}
         <footer
           dir="ltr"
           className="h-7 shrink-0 bg-canvas-elevated border-t border-stroke px-3 flex items-center justify-between text-[11px] font-mono text-ink-muted select-none"
@@ -599,14 +728,21 @@ export function NetPulseWorkspace() {
                 dir={lang === "ar" ? "rtl" : "ltr"}
                 className="font-sans font-medium truncate"
               >
-                {t.engineOnline}
+                {systemCloudDisabled ? t.engineCloudOnline : t.engineOnline}
               </span>
             </span>
-            {systemTelemetry && (
-              <span className="hidden md:inline-flex items-center gap-1 ltr-data">
-                <Terminal className="w-3 h-3 text-cyan-500" />
-                {systemTelemetry.nodeVersion} • {systemTelemetry.platform}/{systemTelemetry.arch}
+            {systemCloudDisabled && observedProbeRegion ? (
+              <span className="hidden md:inline-flex items-center gap-1 ltr-data text-cyan-500">
+                <Cloud className="w-3 h-3" />
+                {observedProbeRegion}
               </span>
+            ) : (
+              systemTelemetry && (
+                <span className="hidden md:inline-flex items-center gap-1 ltr-data">
+                  <Terminal className="w-3 h-3 text-cyan-500" />
+                  {systemTelemetry.nodeVersion} • {systemTelemetry.platform}/{systemTelemetry.arch}
+                </span>
+              )
             )}
           </div>
 
@@ -617,10 +753,12 @@ export function NetPulseWorkspace() {
                 className="hidden sm:inline-block text-ink-secondary"
               >
                 {t.common.targetLabel}:{" "}
-                <strong className="text-cyan-500 font-mono inline-block ltr-data">{displayTarget}</strong>
+                <strong className="text-cyan-500 font-mono inline-block ltr-data">
+                  {displayTarget}
+                </strong>
               </span>
             )}
-            <span className="font-mono inline-block ltr-data">v1.0.0</span>
+            <span className="font-mono inline-block ltr-data">v1.1.0</span>
           </div>
         </footer>
       </div>
